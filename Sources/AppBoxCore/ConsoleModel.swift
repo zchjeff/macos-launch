@@ -49,6 +49,8 @@ public final class ConsoleModel {
     public private(set) var errorMessage: String?
     /// 首轮加载中（冷扫描要几百毫秒，界面得有点表示）。
     public private(set) var isLoading = false
+    /// 正在跑的引导整理。nil 表示向导没在界面上。
+    public private(set) var setup: SetupWizardModel?
 
     private let service: LibraryService
 
@@ -129,6 +131,33 @@ public final class ConsoleModel {
 
     public func dismissError() {
         errorMessage = nil
+    }
+
+    // MARK: - 引导整理
+
+    /// 进入引导整理。
+    ///
+    /// 建议取自「未分类」里的应用：首启时配置是空的，扫到的应用全在那儿；
+    /// 即便之后再进向导，要整理的本来也还是这批还没归位的。
+    public func beginSetup() async {
+        await refresh()
+        guard let ungrouped = groups.first(where: { $0.group.isUngrouped }) else { return }
+        setup = SetupWizardModel(
+            service: service,
+            plan: SetupAdvisor.standard.plan(from: ungrouped.applications)
+        )
+    }
+
+    /// 向导走完（确认或取消都算）之后的收尾：关掉它，并按刚落盘的配置重读一遍。
+    public func endSetup() async {
+        setup = nil
+        await refresh()
+    }
+
+    /// 向导被直接关掉：没确认也没取消，那就什么都不写——配置文件仍不存在，
+    /// 下次启动还会进向导，这比替用户做一个他没做的决定要诚实。
+    public func dismissSetup() {
+        setup = nil
     }
 
     // MARK: - 分组变更

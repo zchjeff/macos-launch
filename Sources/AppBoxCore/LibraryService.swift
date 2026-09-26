@@ -157,6 +157,30 @@ public final class LibraryService: @unchecked Sendable {
 
     // MARK: - 单个应用
 
+    /// 采纳一次引导整理：按计划建好分组、安置成员，**一次写盘**。
+    ///
+    /// 与逐个 `createGroup` + `move` 的差别不只是快慢：那样写会在中途留下半成品，
+    /// 而这个方法的语义是「计划要么整份成立，要么什么都没发生」。名字先整批校验完
+    /// 再进临界区，所以第二条名字不合法时，第一条也不会落盘。
+    ///
+    /// **空计划也会把配置写下去**：文件存在与否就是「首启过没过」的标志，
+    /// 向导的「取消」走的就是这条路（取消 = 采纳一个空计划）。
+    public func applySetup(_ groups: [GroupPlan]) throws {
+        let plans = try groups.map { GroupPlan(name: try validated($0.name), members: $0.members) }
+
+        try mutate(forcingWrite: true) { config in
+            for plan in plans {
+                let created = Group(id: UUID().uuidString, name: plan.name)
+                config.groups.append(created)
+                for member in plan.members {
+                    var application = config.applications[member] ?? ApplicationConfig()
+                    application.groupID = created.id
+                    config.applications[member] = application
+                }
+            }
+        }
+    }
+
     /// 把应用移入某个分组。应用还没出现在配置里时会顺带建一条默认记录。
     public func move(bundleIdentifier: String, toGroup groupID: String) throws {
         try mutate { config in
@@ -250,12 +274,15 @@ public final class LibraryService: @unchecked Sendable {
     ///
     /// 归一化之后跟当前一致就什么都不做：读路径（`snapshot(recordingPaths:)`）也会走这里，
     /// 没变化却写一次盘，等于每次开控制台都空改一次用户文件。
-    private func mutate(_ body: (inout AppBoxConfig) throws -> Void) throws {
+    ///
+    /// - Parameter forcingWrite: 内容没变也照写。只有「向导结束」用得上——
+    ///   它要的不是内容变化，而是让配置文件**存在**。
+    private func mutate(forcingWrite: Bool = false, _ body: (inout AppBoxConfig) throws -> Void) throws {
         try lock.withLock {
             var draft = config
             try body(&draft)
             let normalized = draft.normalized()
-            guard normalized != config else { return }
+            guard forcingWrite || normalized != config else { return }
             try configStore.save(normalized)
             config = normalized
         }

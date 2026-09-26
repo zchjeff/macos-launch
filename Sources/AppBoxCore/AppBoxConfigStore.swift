@@ -26,6 +26,15 @@ public enum ConfigLoadOutcome: Sendable, Equatable {
             nil
         }
     }
+
+    /// 配置文件不存在的那一次启动。
+    ///
+    /// 引导整理只在这时候出现；一旦向导结束（确认或取消），文件就存在了，
+    /// 「首启」这两个字也就过去了——不需要另存一个「向导看过没有」的标记。
+    public var isFirstLaunch: Bool {
+        if case .createdDefault = self { return true }
+        return false
+    }
 }
 
 public enum ConfigStoreError: Error, Equatable {

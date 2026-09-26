@@ -116,6 +116,28 @@ enum TestRecords {
     }
 }
 
+/// 渲染就绪的那一层。给不经过扫描、只关心投影的测试用。
+enum TestEntries {
+    static func make(
+        _ bundleIdentifier: String,
+        name: String,
+        category: String? = nil,
+        alias: String? = nil,
+        isHidden: Bool = false
+    ) -> ApplicationEntry {
+        ApplicationEntry(
+            bundleIdentifier: bundleIdentifier,
+            realName: name,
+            alias: alias,
+            path: "/Applications/\(name).app",
+            category: category,
+            iconCachePath: nil,
+            isHidden: isHidden,
+            isLocked: false
+        )
+    }
+}
+
 /// 装配一个用假端口、真临时目录的 `LibraryService`。
 ///
 /// 配置走真实的 `AppBoxConfigStore` 指向临时目录——分组是要落盘的东西，
@@ -130,13 +152,20 @@ final class ServiceFixture {
     let launcher: FakeLauncher
     private let directory: TempDirectory
 
-    init(records: [AppRecord] = [], config: AppBoxConfig = AppBoxConfig()) throws {
+    init(records: [AppRecord] = [], config: AppBoxConfig = AppBoxConfig(), writesConfig: Bool = true) throws {
         directory = try TempDirectory()
         store = AppBoxConfigStore(directory: directory.url)
-        try store.save(config)
+        if writesConfig {
+            try store.save(config)
+        }
         scanner = FakeAppScanner(records: records)
         icons = FakeIconProvider()
         launcher = FakeLauncher()
+    }
+
+    /// 配置文件不存在的 fixture——这就是「首次启动」。
+    static func firstLaunch(records: [AppRecord] = []) throws -> ServiceFixture {
+        try ServiceFixture(records: records, writesConfig: false)
     }
 
     var service: LibraryService {

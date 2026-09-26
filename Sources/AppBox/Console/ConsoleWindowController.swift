@@ -17,12 +17,14 @@ final class ConsoleWindowController {
 
     /// 每次打开都重读一遍分组结构：控制台关着的时候，覆盖层那边可能已经拖过了。
     func show() {
-        let window = self.window ?? makeWindow()
-        self.window = window
-        window.makeKeyAndOrderFront(nil)
-        NSApp.activate()
-
+        present()
         Task { await model.refresh() }
+    }
+
+    /// 首启：打开控制台并直接进入引导整理。
+    func showSetup() {
+        present()
+        Task { await model.beginSetup() }
     }
 
     /// 目录变更后送进来的新快照。
@@ -32,6 +34,13 @@ final class ConsoleWindowController {
     func apply(_ snapshot: LibrarySnapshot) {
         guard window?.isVisible == true else { return }
         model.apply(snapshot)
+    }
+
+    private func present() {
+        let window = self.window ?? makeWindow()
+        self.window = window
+        window.makeKeyAndOrderFront(nil)
+        NSApp.activate()
     }
 
     private func makeWindow() -> NSWindow {

@@ -60,6 +60,13 @@ struct ConsoleView: View {
                 }
             }
         }
+        .sheet(isPresented: setupPresentation) {
+            if let setup = model.setup {
+                SetupWizardView(model: setup) {
+                    Task { await model.endSetup() }
+                }
+            }
+        }
         .alert("操作失败", isPresented: isShowingError) {
             Button("知道了") { model.dismissError() }
         } message: {
@@ -260,6 +267,15 @@ struct ConsoleView: View {
         Binding(
             get: { model.errorMessage != nil },
             set: { if !$0 { model.dismissError() } }
+        )
+    }
+
+    /// 引导整理由控制台承载：首启打开控制台时就挂在上面，走完自己摘掉。
+    private var setupPresentation: Binding<Bool> {
+        Binding(
+            get: { model.setup != nil },
+            // 没点「确认」也没点「取消」就把它关掉：什么都不写，下次启动再说。
+            set: { if !$0 { model.dismissSetup() } }
         )
     }
 }

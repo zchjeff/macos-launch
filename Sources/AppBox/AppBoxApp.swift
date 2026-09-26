@@ -59,6 +59,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // 先把快照算出来，免得第一次按键落在冷扫描上。
         overlay.prewarm()
         startDirectorySync()
+
+        // 首启进引导整理。之后启动只静默常驻——配置文件在，向导就不再出现。
+        if service.loadOutcome.isFirstLaunch {
+            console.showSetup()
+        }
     }
 
     /// 订阅目录变更。

@@ -65,6 +65,21 @@ public struct ApplicationConfig: Codable, Sendable, Equatable {
     }
 }
 
+/// 一次要落盘的分组：名字 + 成员。
+///
+/// 引导整理采纳之后整批交给 `LibraryService.applySetup`：一次算好、一次写盘，
+/// 中途不会留下「组建好了、人还没放进去」的半成品。
+public struct GroupPlan: Sendable, Equatable {
+    public let name: String
+    /// 成员的应用主键（bundleID）。
+    public let members: [String]
+
+    public init(name: String, members: [String]) {
+        self.name = name
+        self.members = members
+    }
+}
+
 /// 分组与归属的变更错误。
 public enum GroupError: Error, Equatable {
     /// 「未分类」不可删除、不可重命名。
