@@ -74,6 +74,30 @@ final class FakeLauncher: Launching, @unchecked Sendable {
     }
 }
 
+/// 手动触发的假监听：测试想什么时候报「目录变了」就什么时候报。
+final class FakeWatcher: Watching, @unchecked Sendable {
+    private let lock = NSLock()
+    private var handler: (@Sendable () -> Void)?
+
+    func start(onChange: @escaping @Sendable () -> Void) {
+        lock.withLock { handler = onChange }
+    }
+
+    func stop() {
+        lock.withLock { handler = nil }
+    }
+
+    var isWatching: Bool {
+        lock.withLock { handler != nil }
+    }
+
+    /// 模拟一次目录变更事件。线程与真实实现一致：不保证在主线程。
+    func fire() {
+        let handler = lock.withLock { self.handler }
+        handler?()
+    }
+}
+
 enum TestRecords {
     static func make(
         _ bundleIdentifier: String,

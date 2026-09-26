@@ -14,6 +14,9 @@ final class OverlayController {
     private let service: LibraryService
     private var window: OverlayWindow?
     private var hostingView: NSHostingView<OverlayView>?
+    /// 最近一次算出来的快照。与 `renderedSnapshot` 分开：窗口还没建的时候也得
+    /// 留住它，否则首屏是一张空网格，要等扫描回来才填上。
+    private var latestSnapshot: LibrarySnapshot?
     private var renderedSnapshot: LibrarySnapshot?
     private var hotKey: GlobalHotKey?
     private var escapeMonitor: Any?
@@ -135,19 +138,22 @@ final class OverlayController {
     /// 后台重算快照，回到主线程后再决定要不要重建视图。
     ///
     /// 扫描要读 100 多个 Info.plist，放主线程上就是一次可感知的卡顿。
+    /// 这里**不**记录应用位置——覆盖层这条路上一个字节都不写盘（ticket 017）。
     private func refresh() {
         let service = self.service
         Task.detached(priority: .utility) { [weak self] in
             let snapshot = service.snapshot()
-            await MainActor.run { self?.render(snapshot) }
+            await MainActor.run { self?.apply(snapshot) }
         }
     }
 
-    /// 只在快照真的变了的时候重建视图树。
+    /// 换成一份新快照。
     ///
-    /// 给 `rootView` 赋值会重跑整棵 SwiftUI 树；大多数唤起时应用清单没变，
-    /// 那这笔开销就是白花的，而窗口里已有的画面本来就是要显示的内容。
-    private func render(_ snapshot: LibrarySnapshot) {
+    /// 只在快照真的变了的时候重建视图树：给 `rootView` 赋值会重跑整棵 SwiftUI 树，
+    /// 而大多数变更（比如某个应用的图标补上了）本就不影响画面。窗口自始至终是同一个，
+    /// 覆盖层开着的时候也只是原地换内容，不会闪。
+    func apply(_ snapshot: LibrarySnapshot) {
+        latestSnapshot = snapshot
         guard let hostingView, snapshot != renderedSnapshot else { return }
         hostingView.rootView = OverlayView(
             snapshot: snapshot,
@@ -175,9 +181,15 @@ final class OverlayController {
         window.isMovable = false
         window.animationBehavior = .none
 
+        // 第一次建窗时用预热好的那份快照，首屏立刻有内容；随后后台再校一遍。
         let hostingView = NSHostingView(
-            rootView: OverlayView(snapshot: LibrarySnapshot(groups: []), onLaunch: { _ in }, onDismiss: {})
+            rootView: OverlayView(
+                snapshot: latestSnapshot ?? LibrarySnapshot(groups: []),
+                onLaunch: { _ in },
+                onDismiss: {}
+            )
         )
+        renderedSnapshot = latestSnapshot
         self.hostingView = hostingView
         window.contentView = hostingView
         return window

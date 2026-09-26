@@ -244,7 +244,11 @@ public final class ConsoleModel {
         await refresh()
     }
 
-    private func apply(_ snapshot: LibrarySnapshot) {
+    /// 换上一份已经算好的快照。
+    ///
+    /// 给「目录监听到变更」这条路用的：那份快照是 `LibrarySync` 扫的，
+    /// 这里再扫一遍纯属重复——覆盖层拿到的是同一份快照，两边显示的自然是同一个状态。
+    public func apply(_ snapshot: LibrarySnapshot) {
         groups = snapshot.groups
         missing = snapshot.missing
 

@@ -35,12 +35,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let service: LibraryService
     private let overlay: OverlayController
     private let console: ConsoleWindowController
+    /// 磁盘变更的监听：新装的应用不用重启就能看到，删掉的立刻进「失效」列表。
+    private let sync: LibrarySync
 
     override init() {
         let service = LibraryService.live()
         self.service = service
         overlay = OverlayController(service: service)
         console = ConsoleWindowController(service: service)
+        sync = LibrarySync(
+            service: service,
+            watcher: FSEventsWatcher(paths: ApplicationDirectory.defaultRoots.map(\.url.path))
+        )
         super.init()
     }
 
@@ -52,6 +58,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         // 先把快照算出来，免得第一次按键落在冷扫描上。
         overlay.prewarm()
+        startDirectorySync()
+    }
+
+    /// 订阅目录变更。
+    ///
+    /// 回调在后台线程，切回主线程再动界面。覆盖层不靠这条路也能看到新应用
+    /// （每次唤起都会重扫），它管的是另外两件事：控制台开着时当场出现「失效」条目，
+    /// 以及让覆盖层预热的那份快照保持新鲜。
+    private func startDirectorySync() {
+        sync.subscribe { [weak self] snapshot in
+            Task { @MainActor in self?.apply(snapshot) }
+        }
+        sync.start()
+    }
+
+    private func apply(_ snapshot: LibrarySnapshot) {
+        overlay.apply(snapshot)
+        console.apply(snapshot)
     }
 
     /// 点 Dock 图标开控制台。

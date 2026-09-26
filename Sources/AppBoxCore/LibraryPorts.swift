@@ -21,6 +21,16 @@ public protocol Launching: Sendable {
     func launch(bundleIdentifier: String, path: String)
 }
 
+/// 目录变化的信号源。
+///
+/// 端口刻意保持「哑」：只把底层的帧变成一次回调，不做任何合并——
+/// 合并放在 `LibrarySync` 里，那里能脱离 FSEvents 单独测。
+public protocol Watching: AnyObject, Sendable {
+    /// 开始监听。`onChange` 可能被密集调用，也可能来自任意线程。
+    func start(onChange: @escaping @Sendable () -> Void)
+    func stop()
+}
+
 /// 把「图标缓存」与「图标渲染」接成 `IconProviding`。
 ///
 /// 两个组件分开是为了让缓存逻辑（命中/失效/写盘）不依赖 AppKit，可以单独测；

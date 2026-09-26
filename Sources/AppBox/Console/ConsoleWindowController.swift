@@ -25,6 +25,15 @@ final class ConsoleWindowController {
         Task { await model.refresh() }
     }
 
+    /// 目录变更后送进来的新快照。
+    ///
+    /// 只在这个窗口正开着的时候更新：关着的时候模型里的东西没人看，
+    /// 下次 `show()` 本来就会重读一遍（而且那时候读到的只会更新）。
+    func apply(_ snapshot: LibrarySnapshot) {
+        guard window?.isVisible == true else { return }
+        model.apply(snapshot)
+    }
+
     private func makeWindow() -> NSWindow {
         let window = NSWindow(
             contentRect: NSRect(x: 0, y: 0, width: 940, height: 600),
