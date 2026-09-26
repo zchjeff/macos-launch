@@ -1,12 +1,13 @@
+import AppBoxCore
 import SwiftUI
 
-/// 002 的占位网格：20 个硬编码假应用，用来验证窗口层级、多屏判定、排版与 Esc 退出。
-/// 004 会用真实扫描结果替换掉它。
+/// 覆盖层网格：渲染 `LibrarySnapshot` 里的真实应用，单击启动并收起。
 struct OverlayView: View {
+    let snapshot: LibrarySnapshot
+    let onLaunch: (ApplicationEntry) -> Void
     let onDismiss: () -> Void
 
     private let columnCount = 7
-    private let tiles = PlaceholderTile.samples
 
     var body: some View {
         ZStack {
@@ -23,8 +24,8 @@ struct OverlayView: View {
                     ),
                     spacing: 28
                 ) {
-                    ForEach(tiles) { tile in
-                        TileView(tile: tile)
+                    ForEach(snapshot.applications) { entry in
+                        TileView(entry: entry) { onLaunch(entry) }
                     }
                 }
                 .padding(.horizontal, 60)
@@ -35,51 +36,58 @@ struct OverlayView: View {
 }
 
 private struct TileView: View {
-    let tile: PlaceholderTile
+    let entry: ApplicationEntry
+    let action: () -> Void
+
+    @State private var isHovering = false
 
     var body: some View {
-        VStack(spacing: 8) {
-            RoundedRectangle(cornerRadius: 18, style: .continuous)
-                .fill(.background.opacity(0.55))
+        Button(action: action) {
+            VStack(spacing: 8) {
+                RoundedRectangle(cornerRadius: 18, style: .continuous)
+                    .fill(.background.opacity(isHovering ? 0.8 : 0.55))
+                    .frame(width: 96, height: 96)
+                    .overlay {
+                        icon
+                    }
+                Text(entry.displayName)
+                    .font(.caption)
+                    .lineLimit(1)
+                    .frame(width: 100)
+            }
+        }
+        .buttonStyle(.plain)
+        .onHover { isHovering = $0 }
+    }
+
+    @ViewBuilder
+    private var icon: some View {
+        if let image = entry.iconCachePath.flatMap(IconImageStore.image(atPath:)) {
+            Image(nsImage: image)
+                .resizable()
+                .interpolation(.high)
                 .frame(width: 96, height: 96)
-                .overlay {
-                    Image(systemName: tile.symbol)
-                        .font(.system(size: 44))
-                        .foregroundStyle(.primary)
-                }
-            Text(tile.name)
-                .font(.caption)
-                .lineLimit(1)
-                .frame(width: 100)
+        } else {
+            Image(systemName: "app.fill")
+                .font(.system(size: 44))
+                .foregroundStyle(.secondary)
         }
     }
 }
 
-struct PlaceholderTile: Identifiable {
-    let id: Int
-    let name: String
-    let symbol: String
+/// 进程内图标缓存。
+///
+/// 磁盘缓存解决的是"不重复向系统要图标"，但 `NSImage` 每次构造都要重新读盘、
+/// 真正解码发生在首次绘制时；而 SwiftUI 每次求值 `body` 都会重跑这段代码。
+/// 覆盖层每次唤起都重建整棵视图树，缺了这层就会反复读同一批 PNG。
+@MainActor
+private enum IconImageStore {
+    private static let cache = NSCache<NSString, NSImage>()
 
-    static let samples: [PlaceholderTile] = [
-        PlaceholderTile(id: 0, name: "访达", symbol: "face.smiling"),
-        PlaceholderTile(id: 1, name: "日历", symbol: "calendar"),
-        PlaceholderTile(id: 2, name: "邮件", symbol: "envelope"),
-        PlaceholderTile(id: 3, name: "备忘录", symbol: "note.text"),
-        PlaceholderTile(id: 4, name: "提醒事项", symbol: "checklist"),
-        PlaceholderTile(id: 5, name: "地图", symbol: "map"),
-        PlaceholderTile(id: 6, name: "照片", symbol: "photo"),
-        PlaceholderTile(id: 7, name: "音乐", symbol: "music.note"),
-        PlaceholderTile(id: 8, name: "播客", symbol: "mic"),
-        PlaceholderTile(id: 9, name: "终端", symbol: "terminal"),
-        PlaceholderTile(id: 10, name: "活动监视器", symbol: "gauge"),
-        PlaceholderTile(id: 11, name: "磁盘工具", symbol: "externaldrive"),
-        PlaceholderTile(id: 12, name: "截图", symbol: "camera.viewfinder"),
-        PlaceholderTile(id: 13, name: "系统设置", symbol: "gearshape"),
-        PlaceholderTile(id: 14, name: "计算器", symbol: "plusminus"),
-        PlaceholderTile(id: 15, name: "时钟", symbol: "clock"),
-        PlaceholderTile(id: 16, name: "预览", symbol: "doc.text.magnifyingglass"),
-        PlaceholderTile(id: 17, name: "词典", symbol: "character.book.closed"),
-        PlaceholderTile(id: 18, name: "字体册", symbol: "textformat"),
-        PlaceholderTile(id: 19, name: "钥匙串访问", symbol: "key"),
-    ]
+    static func image(atPath path: String) -> NSImage? {
+        if let cached = cache.object(forKey: path as NSString) { return cached }
+        guard let image = NSImage(contentsOfFile: path) else { return nil }
+        cache.setObject(image, forKey: path as NSString)
+        return image
+    }
 }

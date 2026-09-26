@@ -29,12 +29,13 @@ struct AppBoxApp: App {
 
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
-    let overlay = OverlayController()
+    let overlay = OverlayController(service: .live())
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         if !overlay.installHotKey() {
             NSLog("[AppBox] ⌥+Space 注册失败，可能已被其他应用占用")
         }
+        overlay.prewarm()
     }
 
     /// 关掉窗口不等于退出——热键必须继续可用。

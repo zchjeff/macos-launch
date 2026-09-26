@@ -8,7 +8,7 @@ import Foundation
 enum ScanCommand {
     static func run() {
         let scanner = AppScanner()
-        let cache = IconCache(directory: iconsDirectory)
+        let cache = IconCache(directory: AppBoxIdentity.iconsDirectory)
         let renderer = SystemIconRenderer()
 
         let scanStart = Date()
@@ -37,11 +37,7 @@ enum ScanCommand {
         print(rows.joined(separator: "\n"))
         print("")
         print("图标：\(cached)/\(records.count) 已缓存，耗时 \(formatted(iconDuration))")
-        print("缓存目录：\(iconsDirectory.path)")
-    }
-
-    private static var iconsDirectory: URL {
-        AppBoxIdentity.applicationSupportDirectory.appendingPathComponent("icons", isDirectory: true)
+        print("缓存目录：\(AppBoxIdentity.iconsDirectory.path)")
     }
 
     private static func formatted(_ interval: TimeInterval) -> String {

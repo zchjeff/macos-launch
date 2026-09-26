@@ -14,4 +14,9 @@ public enum AppBoxIdentity {
         let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
         return base.appendingPathComponent(displayName, isDirectory: true)
     }
+
+    /// 图标缓存目录。与配置文件物理分离，保证配置文件始终轻量（ADR-0005）。
+    public static var iconsDirectory: URL {
+        applicationSupportDirectory.appendingPathComponent("icons", isDirectory: true)
+    }
 }

@@ -6,14 +6,24 @@ import SwiftUI
 /// 覆盖层的生命周期与窗口配置。
 ///
 /// 唤起瞬间判定目标屏幕、创建窗口、抢焦点；收起时把焦点还给原来的前台应用。
+///
+/// 窗口只建一次、收起时 `orderOut` 而不销毁：重建一个全屏窗口连同它的
+/// SwiftUI 视图树要 60ms 以上，而热键这条路径的预算是 150ms。
 @MainActor
 final class OverlayController {
+    private let service: LibraryService
     private var window: OverlayWindow?
+    private var hostingView: NSHostingView<OverlayView>?
+    private var renderedSnapshot: LibrarySnapshot?
     private var hotKey: GlobalHotKey?
     private var escapeMonitor: Any?
     private var previousApp: NSRunningApplication?
 
     private(set) var isVisible = false
+
+    init(service: LibraryService) {
+        self.service = service
+    }
 
     /// 覆盖层显隐变化的通知，供测试与调试观察。
     var onVisibilityChange: ((Bool) -> Void)?
@@ -34,20 +44,34 @@ final class OverlayController {
         isVisible ? hide() : show()
     }
 
+    /// 启动时先算一次快照，免得第一次按键落在冷路径上。
+    func prewarm() {
+        refresh()
+    }
+
     func show() {
         guard !isVisible else { return }
         guard let screen = targetScreen() else { return }
 
         previousApp = NSWorkspace.shared.frontmostApplication
 
-        let window = makeWindow(for: screen)
-        self.window = window
+        let window = preparedWindow(for: screen)
         window.makeKeyAndOrderFront(nil)
         NSApp.activate()
 
         installEscapeMonitor()
         isVisible = true
         onVisibilityChange?(true)
+
+        // 唤起路径上不读盘（ticket 017 的硬性要求）：先把窗口摆出来，
+        // 再让重扫描在后台跑。清单多数时候没变，`render` 会因此什么都不做。
+        refresh()
+    }
+
+    /// 单击一个方块的完整语义：启动该应用并收起覆盖层。
+    func activate(_ entry: ApplicationEntry) {
+        service.launch(entry)
+        hide()
     }
 
     func hide() {
@@ -55,7 +79,6 @@ final class OverlayController {
 
         removeEscapeMonitor()
         window?.orderOut(nil)
-        window = nil
         isVisible = false
         onVisibilityChange?(false)
 
@@ -89,6 +112,41 @@ final class OverlayController {
         return Point(x: location.x, y: location.y)
     }
 
+    /// 复用已建好的窗口，必要时把它挪到目标屏幕上。
+    private func preparedWindow(for screen: NSScreen) -> OverlayWindow {
+        let window = self.window ?? makeWindow(for: screen)
+        self.window = window
+        if window.frame != screen.frame {
+            window.setFrame(screen.frame, display: false)
+        }
+        return window
+    }
+
+    /// 后台重算快照，回到主线程后再决定要不要重建视图。
+    ///
+    /// 扫描要读 100 多个 Info.plist，放主线程上就是一次可感知的卡顿。
+    private func refresh() {
+        let service = self.service
+        Task.detached(priority: .utility) { [weak self] in
+            let snapshot = service.snapshot()
+            await MainActor.run { self?.render(snapshot) }
+        }
+    }
+
+    /// 只在快照真的变了的时候重建视图树。
+    ///
+    /// 给 `rootView` 赋值会重跑整棵 SwiftUI 树；大多数唤起时应用清单没变，
+    /// 那这笔开销就是白花的，而窗口里已有的画面本来就是要显示的内容。
+    private func render(_ snapshot: LibrarySnapshot) {
+        guard let hostingView, snapshot != renderedSnapshot else { return }
+        hostingView.rootView = OverlayView(
+            snapshot: snapshot,
+            onLaunch: { [weak self] entry in self?.activate(entry) },
+            onDismiss: { [weak self] in self?.hide() }
+        )
+        renderedSnapshot = snapshot
+    }
+
     private func makeWindow(for screen: NSScreen) -> OverlayWindow {
         let window = OverlayWindow(
             contentRect: screen.frame,
@@ -106,9 +164,12 @@ final class OverlayController {
         window.hasShadow = false
         window.isMovable = false
         window.animationBehavior = .none
-        window.contentView = NSHostingView(
-            rootView: OverlayView { [weak self] in self?.hide() }
+
+        let hostingView = NSHostingView(
+            rootView: OverlayView(snapshot: LibrarySnapshot(applications: []), onLaunch: { _ in }, onDismiss: {})
         )
+        self.hostingView = hostingView
+        window.contentView = hostingView
         return window
     }
 

@@ -6,7 +6,9 @@ import Foundation
 public struct AppScanner: Sendable {
     public init() {}
 
-    public func scan(roots: [ScanRoot] = ApplicationDirectory.defaultRoots) -> [AppRecord] {
+    /// 扫描给定的根。真实机器上请用 `AppScanning` 的 `scan()`，
+    /// 这个带参数的版本是给测试指向临时目录用的。
+    public func scan(roots: [ScanRoot]) -> [AppRecord] {
         let candidates = roots.flatMap(candidates(in:))
 
         // 排序必须是全序，否则同一 bundleID 的胜者会随目录遍历顺序抖动，
