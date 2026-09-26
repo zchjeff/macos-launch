@@ -13,6 +13,19 @@ public enum ConfigLoadOutcome: Sendable, Equatable {
     case recoveredFromCorruption(AppBoxConfig, backup: URL)
     /// 文件的 schema 版本本程序认不了，既没读也没动它。
     case refusedUnsupportedSchema(found: Int, supported: Int)
+
+    /// 本次加载可以拿来用的配置。
+    ///
+    /// 版本认不了时返回 nil——没有可信的配置可用，调用方必须显式决定
+    /// （提示用户、只读运行、退出），而不是拿个默认配置顶上去装作无事发生。
+    public var usableConfig: AppBoxConfig? {
+        switch self {
+        case .loaded(let config), .createdDefault(let config), .recoveredFromCorruption(let config, _):
+            config
+        case .refusedUnsupportedSchema:
+            nil
+        }
+    }
 }
 
 public enum ConfigStoreError: Error, Equatable {
@@ -126,17 +139,32 @@ public struct AppBoxConfigStore: Sendable {
               let config = try? JSONDecoder().decode(AppBoxConfig.self, from: migrated) else {
             throw SchemaFailure.malformed
         }
-        return config
+        // 配置可以被手改，所以「未分类」一定存在这类不变量在读入的边界上修复，
+        // 而不是假设磁盘上的内容合法。
+        return config.normalized()
     }
 
     /// schema 迁移入口。
     ///
-    /// 现在还没有历史版本，所以落在当前版本之前的文件一律以 `unsupportedSchema` 拒绝，
-    /// 而不是当成损坏去覆盖——版本号认不出来不等于内容坏了。
-    ///
-    /// 第一次改字段时把 `currentSchemaVersion` +1，并在这里逐级升（1→2→3），
-    /// 每段迁移只关心自己那一档的变化，升完把 `schemaVersion` 改写成下一档。
+    /// 逐级升（1→2→3），每段只关心自己那一档的变化，升完把 `schemaVersion` 改写成下一档。
+    /// 认不出来的版本一律以 `unsupportedSchema` 拒绝，而不是当成损坏去覆盖——
+    /// 版本号认不出来不等于内容坏了。
     private static func migrated(_ payload: [String: Any], from version: Int) throws -> [String: Any] {
+        var payload = payload
+        var version = version
+
+        while version < AppBoxConfig.currentSchemaVersion {
+            switch version {
+            case 1:
+                // v1 只有 schemaVersion 一个字段。v2 新增的 groups / applications
+                // 在 `AppBoxConfig.init(from:)` 里有解码默认值，所以这一步只需推进版本号。
+                payload["schemaVersion"] = 2
+            default:
+                throw SchemaFailure.unsupportedVersion(version)
+            }
+            version += 1
+        }
+
         guard version == AppBoxConfig.currentSchemaVersion else {
             throw SchemaFailure.unsupportedVersion(version)
         }

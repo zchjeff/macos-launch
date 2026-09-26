@@ -166,7 +166,7 @@ final class OverlayController {
         window.animationBehavior = .none
 
         let hostingView = NSHostingView(
-            rootView: OverlayView(snapshot: LibrarySnapshot(applications: []), onLaunch: { _ in }, onDismiss: {})
+            rootView: OverlayView(snapshot: LibrarySnapshot(groups: []), onLaunch: { _ in }, onDismiss: {})
         )
         self.hostingView = hostingView
         window.contentView = hostingView

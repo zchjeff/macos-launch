@@ -24,7 +24,7 @@ struct OverlayView: View {
                     ),
                     spacing: 28
                 ) {
-                    ForEach(snapshot.applications) { entry in
+                    ForEach(snapshot.allApplications) { entry in
                         TileView(entry: entry) { onLaunch(entry) }
                     }
                 }

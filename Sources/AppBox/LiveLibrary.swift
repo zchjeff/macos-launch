@@ -7,6 +7,7 @@ extension LibraryService {
     /// 一边刚补好的图标另一边看不见。
     static func live() -> LibraryService {
         LibraryService(
+            configStore: AppBoxConfigStore(directory: AppBoxIdentity.applicationSupportDirectory),
             scanner: AppScanner(),
             icons: CachedIcons(
                 cache: IconCache(directory: AppBoxIdentity.iconsDirectory),

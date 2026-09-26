@@ -91,3 +91,31 @@ enum TestRecords {
         )
     }
 }
+
+/// 装配一个用假端口、真临时目录的 `LibraryService`。
+///
+/// 配置走真实的 `AppBoxConfigStore` 指向临时目录——分组是要落盘的东西，
+/// 用内存假实现就等于把「改完重启还在不在」这条完全跳过。
+///
+/// `service` 每次访问都新建一个服务并从磁盘重读配置，所以它天然模拟了「重启」：
+/// 上一次改动如果没真正落盘，下一次访问就看不见。
+final class ServiceFixture {
+    let store: AppBoxConfigStore
+    let scanner: FakeAppScanner
+    let icons: FakeIconProvider
+    let launcher: FakeLauncher
+    private let directory: TempDirectory
+
+    init(records: [AppRecord] = [], config: AppBoxConfig = AppBoxConfig()) throws {
+        directory = try TempDirectory()
+        store = AppBoxConfigStore(directory: directory.url)
+        try store.save(config)
+        scanner = FakeAppScanner(records: records)
+        icons = FakeIconProvider()
+        launcher = FakeLauncher()
+    }
+
+    var service: LibraryService {
+        LibraryService(configStore: store, scanner: scanner, icons: icons, launcher: launcher)
+    }
+}
