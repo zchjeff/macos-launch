@@ -12,6 +12,9 @@ import SwiftUI
 @MainActor
 final class OverlayController {
     private let service: LibraryService
+    /// 顶层 ↔ 子网格的导航状态。放在控制器里而不是视图里：视图树在快照变化时
+    /// 会被整体重建，而 Esc 的判定在视图之外（键盘监听器）。
+    private let model = OverlayModel()
     private var window: OverlayWindow?
     private var hostingView: NSHostingView<OverlayView>?
     /// 最近一次算出来的快照。与 `renderedSnapshot` 分开：窗口还没建的时候也得
@@ -57,6 +60,7 @@ final class OverlayController {
         guard let screen = targetScreen() else { return }
 
         previousApp = NSWorkspace.shared.frontmostApplication
+        model.reset()
 
         let window = preparedWindow(for: screen)
         window.makeKeyAndOrderFront(nil)
@@ -154,9 +158,12 @@ final class OverlayController {
     /// 覆盖层开着的时候也只是原地换内容，不会闪。
     func apply(_ snapshot: LibrarySnapshot) {
         latestSnapshot = snapshot
+        // 打开着的分组可能在控制台里被删掉了，那层子网格得自己退掉。
+        model.reconcile(with: snapshot)
         guard let hostingView, snapshot != renderedSnapshot else { return }
         hostingView.rootView = OverlayView(
             snapshot: snapshot,
+            model: model,
             onLaunch: { [weak self] entry in self?.activate(entry) },
             onDismiss: { [weak self] in self?.hide() }
         )
@@ -185,6 +192,7 @@ final class OverlayController {
         let hostingView = NSHostingView(
             rootView: OverlayView(
                 snapshot: latestSnapshot ?? LibrarySnapshot(groups: []),
+                model: model,
                 onLaunch: { _ in },
                 onDismiss: {}
             )
@@ -200,7 +208,11 @@ final class OverlayController {
             // 先在非隔离上下文里判定按键，避免把 NSEvent 带进 @MainActor 闭包
             // （NSEvent 不是 Sendable）。
             guard event.keyCode == UInt16(kVK_Escape) else { return event }
-            MainActor.assumeIsolated { self?.hide() }
+            // 子网格里 Esc 先回顶层，顶层才轮到收起覆盖层。
+            MainActor.assumeIsolated {
+                guard let self, !self.model.back() else { return }
+                self.hide()
+            }
             return nil
         }
     }

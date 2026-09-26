@@ -186,4 +186,57 @@ public struct LibrarySnapshot: Sendable, Equatable {
     public var visibleApplications: [ApplicationEntry] {
         groups.flatMap(\.visibleApplications)
     }
+
+    /// 覆盖层顶层的格子：未分组的应用铺成单图标，其余分组各占一个文件夹方块。
+    ///
+    /// 分组顺序即展示顺序，所以「未分类」的单图标排在前面——它通常是第一个分组。
+    /// 空分组照样出方块：空分组是保留的，用户还要往里放东西。
+    public var topLevelTiles: [OverlayTile] {
+        groups.flatMap { group -> [OverlayTile] in
+            group.group.isUngrouped
+                ? group.visibleApplications.map(OverlayTile.application)
+                : [.folder(FolderTile(group: group))]
+        }
+    }
+}
+
+/// 覆盖层顶层的一个格子。
+public enum OverlayTile: Identifiable, Sendable, Equatable {
+    /// 未分组的应用：直接摆在顶层，点一下就启动。
+    case application(ApplicationEntry)
+    /// 其余分组：一个文件夹方块，点开进子网格。
+    case folder(FolderTile)
+
+    public var id: String {
+        switch self {
+        case .application(let entry): "application:\(entry.bundleIdentifier)"
+        case .folder(let folder): "folder:\(folder.id)"
+        }
+    }
+
+    /// 方块下面那行字。
+    public var displayName: String {
+        switch self {
+        case .application(let entry): entry.displayName
+        case .folder(let folder): folder.name
+        }
+    }
+}
+
+/// 一个分组方块：组名，加上画在方块里的那几个缩略图标。
+public struct FolderTile: Sendable, Equatable, Identifiable {
+    /// 方块里最多摆得下 9 个（3×3）。超过就只取前 9 个——没有「+N」角标，
+    /// 方块上多一个字就脏了，组里到底有多少个点开看更清楚。
+    public static let thumbnailLimit = 9
+
+    public let id: String
+    public let name: String
+    /// 组内靠前的那些可见应用，最多 9 个。
+    public let thumbnails: [ApplicationEntry]
+
+    public init(group: GroupSnapshot) {
+        id = group.group.id
+        name = group.group.name
+        thumbnails = Array(group.visibleApplications.prefix(Self.thumbnailLimit))
+    }
 }
