@@ -22,7 +22,7 @@ final class OverlayController {
     private var latestSnapshot: LibrarySnapshot?
     private var renderedSnapshot: LibrarySnapshot?
     private var hotKey: GlobalHotKey?
-    private var escapeMonitor: Any?
+    private var keyboardMonitor: Any?
     private var previousApp: NSRunningApplication?
 
     private(set) var isVisible = false
@@ -66,7 +66,7 @@ final class OverlayController {
         window.makeKeyAndOrderFront(nil)
         NSApp.activate()
 
-        installEscapeMonitor()
+        installKeyboardMonitor()
         isVisible = true
         onVisibilityChange?(true)
 
@@ -97,7 +97,7 @@ final class OverlayController {
     func hideWithoutRestoringFocus() {
         guard isVisible else { return }
 
-        removeEscapeMonitor()
+        removeKeyboardMonitor()
         window?.orderOut(nil)
         isVisible = false
         onVisibilityChange?(false)
@@ -203,24 +203,84 @@ final class OverlayController {
         return window
     }
 
-    private func installEscapeMonitor() {
-        escapeMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
-            // 先在非隔离上下文里判定按键，避免把 NSEvent 带进 @MainActor 闭包
-            // （NSEvent 不是 Sendable）。
-            guard event.keyCode == UInt16(kVK_Escape) else { return event }
-            // 子网格里 Esc 先回顶层，顶层才轮到收起覆盖层。
+    /// 覆盖层可见期间接管键盘。
+    ///
+    /// 只在可见时安装：控制台、向导那些窗口的键盘一个字都不经过这里。
+    private func installKeyboardMonitor() {
+        keyboardMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+            // 先在非隔离上下文里把要用的东西摘出来，避免把 NSEvent 带进
+            // @MainActor 闭包（NSEvent 不是 Sendable）。
+            let keyCode = event.keyCode
+            let character = event.charactersIgnoringModifiers?.first
+            let hasSystemModifier = !event.modifierFlags
+                .intersection([.command, .control, .option, .function]).isEmpty
+
+            var handled = false
             MainActor.assumeIsolated {
-                guard let self, !self.model.back() else { return }
-                self.hide()
+                handled = self?.handleKey(
+                    keyCode: keyCode,
+                    character: character,
+                    hasSystemModifier: hasSystemModifier
+                ) ?? false
             }
-            return nil
+            // 消费掉的按键不再往响应链上走：ScrollView 自己也会响应方向键，
+            // 不拦下来就会「高亮挪一格、网格又自己滚一段」。
+            return handled ? nil : event
         }
     }
 
-    private func removeEscapeMonitor() {
-        if let escapeMonitor {
-            NSEvent.removeMonitor(escapeMonitor)
-            self.escapeMonitor = nil
+    private func removeKeyboardMonitor() {
+        if let keyboardMonitor {
+            NSEvent.removeMonitor(keyboardMonitor)
+            self.keyboardMonitor = nil
+        }
+    }
+
+    /// 返回 true 表示这次按键被覆盖层消费掉了。
+    private func handleKey(keyCode: UInt16, character: Character?, hasSystemModifier: Bool) -> Bool {
+        if keyCode == UInt16(kVK_Escape) {
+            // 子网格里 Esc 先回顶层，顶层才轮到收起覆盖层。
+            if !model.back() { hide() }
+            return true
+        }
+
+        let tiles = currentTiles()
+        switch keyCode {
+        case UInt16(kVK_LeftArrow):
+            model.move(.left, columns: OverlayGrid.columns, in: tiles)
+        case UInt16(kVK_RightArrow):
+            model.move(.right, columns: OverlayGrid.columns, in: tiles)
+        case UInt16(kVK_UpArrow):
+            model.move(.up, columns: OverlayGrid.columns, in: tiles)
+        case UInt16(kVK_DownArrow):
+            model.move(.down, columns: OverlayGrid.columns, in: tiles)
+        case UInt16(kVK_Return), UInt16(kVK_ANSI_KeypadEnter):
+            activateSelection(in: tiles)
+        default:
+            // 方向键自身带着 .function 标记，所以修饰键这一关只卡字母这一路：
+            // 带 ⌘/⌃/⌥ 的组合键留给系统与菜单（⌘Q 之类）。
+            guard !hasSystemModifier, let character, character.isLetter || character.isNumber else {
+                return false
+            }
+            model.jump(toFirstMatching: character, in: tiles)
+        }
+        return true
+    }
+
+    /// 当前这一层摆着的格子。与视图画的是同一个投影。
+    private func currentTiles() -> [OverlayTile] {
+        latestSnapshot?.tiles(at: model.level) ?? []
+    }
+
+    /// 回车：单图标启动、方块展开——与鼠标点一下走的是同两条路。
+    private func activateSelection(in tiles: [OverlayTile]) {
+        switch model.activation(in: tiles) {
+        case .launch(let entry):
+            activate(entry)
+        case .openGroup(let id):
+            model.open(groupID: id)
+        case nil:
+            break
         }
     }
 }

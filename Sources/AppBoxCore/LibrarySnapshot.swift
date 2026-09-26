@@ -198,6 +198,20 @@ public struct LibrarySnapshot: Sendable, Equatable {
                 : [.folder(FolderTile(group: group))]
         }
     }
+
+    /// 某一层上摆着的格子：顶层是单图标与方块，某个分组的子网格是组内的应用。
+    ///
+    /// 键盘导航与「把高亮滚进可视区」都拿它当「屏幕上有什么」的唯一出处——
+    /// 画出来的和键盘走的必须是同一份，否则高亮会落到看不见的项上。
+    public func tiles(at level: OverlayModel.Level) -> [OverlayTile] {
+        switch level {
+        case .top:
+            return topLevelTiles
+        case .group(let id):
+            let group = groups.first { $0.group.id == id }
+            return group?.visibleApplications.map(OverlayTile.application) ?? []
+        }
+    }
 }
 
 /// 覆盖层顶层的一个格子。
