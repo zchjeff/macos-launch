@@ -13,6 +13,10 @@ enum EntryPoint {
             ScanCommand.run()
             return
         }
+        if CommandLine.arguments.contains("--config") {
+            ConfigCommand.run()
+            return
+        }
         AppBoxApp.main()
     }
 }

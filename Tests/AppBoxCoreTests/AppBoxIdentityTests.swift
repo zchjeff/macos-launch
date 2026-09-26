@@ -14,3 +14,15 @@ func applicationSupportDirectoryIsUnderAppBox() {
     #expect(directory.lastPathComponent == "AppBox")
     #expect(directory.deletingLastPathComponent().lastPathComponent == "Application Support")
 }
+
+@Test("图标缓存是配置目录的子文件夹，与配置文件物理分离")
+func iconsLiveInTheirOwnSubdirectory() throws {
+    let support = AppBoxIdentity.applicationSupportDirectory
+    #expect(AppBoxIdentity.iconsDirectory.deletingLastPathComponent() == support)
+
+    // 配置文件直接躺在 AppBox 目录下，与 icons/ 平级而不是被塞进去。
+    let store = AppBoxConfigStore(directory: support)
+    let config = try store.profileURL(named: AppBoxConfig.defaultProfileName)
+    #expect(config.deletingLastPathComponent() == support)
+    #expect(config.pathExtension == "json")
+}
