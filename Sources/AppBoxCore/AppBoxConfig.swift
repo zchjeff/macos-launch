@@ -40,7 +40,8 @@ extension AppBoxConfig {
     /// 默认方案名，也是首次启动时创建的那个方案。
     public static let defaultProfileName = "default"
 
-    /// 补齐配置必须满足的形态：「未分类」一定存在，且引用它的应用不会指向不存在的分组。
+    /// 补齐配置必须满足的形态：「未分类」一定存在，引用它的应用不会指向不存在的分组，
+    /// 空白别名视同没有别名。
     ///
     /// 配置文件是可以手改的（ADR-0005），所以这层修复放在读入的边界上，
     /// 而不是假设磁盘上的内容一定合法。
@@ -52,10 +53,22 @@ extension AppBoxConfig {
         }
 
         let knownIDs = Set(config.groups.map(\.id))
-        for (bundleIdentifier, application) in config.applications
-        where !knownIDs.contains(application.groupID) {
+        for (bundleIdentifier, application) in config.applications {
+            var repaired = application
+
             // 指向已消失分组的应用落回「未分类」，而不是从快照里消失。
-            config.applications[bundleIdentifier]?.groupID = Group.ungroupedID
+            if !knownIDs.contains(repaired.groupID) {
+                repaired.groupID = Group.ungroupedID
+            }
+
+            // 「有别名但全是空白」和「没有别名」是同一件事，落盘前统一成后者，
+            // 免得界面上出现一个看不见字符的别名、却怎么点都清不掉。
+            if let alias = repaired.alias {
+                let trimmed = alias.trimmingCharacters(in: .whitespacesAndNewlines)
+                repaired.alias = trimmed.isEmpty ? nil : trimmed
+            }
+
+            config.applications[bundleIdentifier] = repaired
         }
 
         return config

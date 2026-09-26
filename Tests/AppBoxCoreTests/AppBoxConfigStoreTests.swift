@@ -63,6 +63,35 @@ struct AppBoxConfigStoreTests {
         #expect(try store.load() == .loaded(AppBoxConfig()))
     }
 
+    @Test("单应用的新字段缺失时按默认值读出，因此不必抬 schema 版本号")
+    func decodesApplicationWithoutNewerFields() throws {
+        let (store, directory, cleanup) = try makeStore()
+        defer { withExtendedLifetime(cleanup) {} }
+
+        // 这就是加字段之前的文件：应用记录里只有 groupID 和 orderWeight。
+        let older = """
+        {
+          "schemaVersion" : 2,
+          "groups" : [ { "id" : "ungrouped", "name" : "未分类" } ],
+          "applications" : {
+            "com.example.app" : { "groupID" : "ungrouped", "orderWeight" : 3 }
+          }
+        }
+        """
+        try Data(older.utf8).write(to: directory.appendingPathComponent("default.json"))
+
+        guard case .loaded(let config) = try store.load() else {
+            Issue.record("旧文件应当照常读出")
+            return
+        }
+        let application = try #require(config.applications["com.example.app"])
+        #expect(application.orderWeight == 3)
+        #expect(application.alias == nil)
+        #expect(application.hidden == false)
+        #expect(application.locked == false)
+        #expect(application.lastKnownPath == nil)
+    }
+
     @Test("高版本配置被拒绝加载，且原文件一个字节都不动")
     func refusesNewerSchema() throws {
         let (store, directory, cleanup) = try makeStore()

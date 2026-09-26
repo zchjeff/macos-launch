@@ -1,6 +1,15 @@
 import Foundation
 import Observation
 
+/// 控制台左侧选中的东西：某个分组，或者「失效应用」那一栏。
+///
+/// 用枚举而不是一个约定的字符串 id：失效列表不是分组，硬塞进分组列表就得靠
+/// 「某个特殊的 id」来区分，那种东西迟早会被当成普通分组处理。
+public enum ConsoleSelection: Hashable, Sendable {
+    case group(String)
+    case missing
+}
+
 /// 控制台的视图模型。
 ///
 /// 放在领域层是为了可测：「点了这个按钮会调什么、失败了会说什么」是这个切片真正的新逻辑，
@@ -13,10 +22,29 @@ import Observation
 public final class ConsoleModel {
     /// 分组结构，顺序即界面顺序。
     public private(set) var groups: [GroupSnapshot] = []
-    /// 当前选中的分组。界面直接双向绑定。
-    public var selectedGroupID: String?
+    /// 配置里有、磁盘上找不到的应用。
+    public private(set) var missing: [MissingApplication] = []
+    /// 左侧选中项。界面直接双向绑定。
+    ///
+    /// 换选中项时顺手清掉右侧选中的应用：两栏是联动的，分组一换，
+    /// 原先选中的那个应用多半不在新列表里，详情面板不该继续显示它。
+    public var selection: ConsoleSelection? {
+        get { storedSelection }
+        set {
+            storedSelection = newValue
+            if let selectedApplicationID, !isListed(selectedApplicationID) {
+                self.selectedApplicationID = nil
+            }
+        }
+    }
+
+    private var storedSelection: ConsoleSelection?
+    /// 右侧列表里选中的应用——详情面板显示的就是它。
+    public var selectedApplicationID: String?
     /// 待确认的删除。界面据此弹确认框——**确认之前一个字节都不写**。
     public var pendingDeletion: GroupSnapshot?
+    /// 待确认的清理。
+    public var pendingForget: MissingApplication?
     /// 最近一次失败的说法。nil 表示没有未处理的错误。
     public private(set) var errorMessage: String?
     /// 首轮加载中（冷扫描要几百毫秒，界面得有点表示）。
@@ -30,13 +58,37 @@ public final class ConsoleModel {
 
     // MARK: - 读
 
-    /// 选中分组里的应用，顺序就是界面上的顺序。
+    /// 选中的分组 id；当前选的是「失效应用」时为 nil。
+    public var selectedGroupID: String? {
+        if case .group(let id) = selection { return id }
+        return nil
+    }
+
+    /// 选中分组里的应用，顺序就是界面上的顺序。隐藏的应用也在其中——
+    /// 控制台要能看到它们、把它们恢复回来。
     public var applications: [ApplicationEntry] {
         groups.first { $0.group.id == selectedGroupID }?.applications ?? []
     }
 
     public var selectedGroup: Group? {
         groups.first { $0.group.id == selectedGroupID }?.group
+    }
+
+    /// 详情面板的内容。失效记录与在场的应用共用一套字段，界面不必分两套画。
+    public var detail: ApplicationDetail? {
+        guard let selectedApplicationID else { return nil }
+
+        if case .missing = selection {
+            guard let record = missing.first(where: { $0.bundleIdentifier == selectedApplicationID }) else {
+                return nil
+            }
+            return ApplicationDetail(record, groupName: groupName(ofGroup: record.groupID))
+        }
+
+        guard let entry = applications.first(where: { $0.bundleIdentifier == selectedApplicationID }) else {
+            return nil
+        }
+        return ApplicationDetail(entry, groupName: selectedGroup?.name)
     }
 
     /// 删除确认框要说的那句话。
@@ -49,16 +101,28 @@ public final class ConsoleModel {
             + "将移入「未分类」，分组本身会被删除。应用不会被卸载。"
     }
 
+    /// 清理确认框要说的那句话：说清楚会丢掉哪些设置。
+    public var forgetConfirmationMessage: String? {
+        guard let pendingForget else { return nil }
+        return "「\(pendingForget.alias ?? pendingForget.bundleIdentifier)」的别名、分组、"
+            + "隐藏等设置都会被清掉。不会卸载或删除任何应用。"
+    }
+
     // MARK: - 同步
 
     /// 重新读一遍分组结构。
     ///
     /// 扫描是阻塞的（冷启动近半秒），所以放到主线程外做，回主线程再赋值——
     /// 否则控制台一打开就整窗卡住。
+    ///
+    /// 顺便记下每个已跟踪应用这次出现的位置：等哪天它不见了，「失效」列表才有话可说。
+    /// 开控制台是低频操作，这点写入不值得省。
     public func refresh() async {
         isLoading = true
         let service = self.service
-        let snapshot = await Task.detached(priority: .userInitiated) { service.snapshot() }.value
+        let snapshot = await Task.detached(priority: .userInitiated) {
+            service.snapshot(recordingPaths: true)
+        }.value
         isLoading = false
         apply(snapshot)
     }
@@ -74,7 +138,7 @@ public final class ConsoleModel {
         await perform { created = try $0.createGroup(named: name) }
         // 新建的分组排在列表末尾，把它选中——用户刚建完，下一步多半是往里放应用。
         if let created {
-            selectedGroupID = created.id
+            selection = .group(created.id)
         }
     }
 
@@ -106,7 +170,7 @@ public final class ConsoleModel {
         await perform { try $0.moveGroup(id: groupID, toIndex: index) }
     }
 
-    // MARK: - 应用归属与顺序
+    // MARK: - 单个应用
 
     public func move(_ bundleIdentifier: String, toGroup groupID: String) async {
         await perform { try $0.move(bundleIdentifier: bundleIdentifier, toGroup: groupID) }
@@ -131,6 +195,39 @@ public final class ConsoleModel {
         await perform { try $0.reorder(groupID: groupID, to: order) }
     }
 
+    /// 设置别名；空字符串等同于清除。
+    public func setAlias(_ alias: String?, for bundleIdentifier: String) async {
+        await perform { try $0.setAlias(alias, for: bundleIdentifier) }
+    }
+
+    /// 隐藏或恢复。隐藏只是不在覆盖层露面，应用本身与其余设置都不动。
+    public func setHidden(_ hidden: Bool, for bundleIdentifier: String) async {
+        await perform { try $0.setHidden(hidden, for: bundleIdentifier) }
+    }
+
+    /// 锁定或解锁组内位置。
+    public func setLocked(_ locked: Bool, for bundleIdentifier: String) async {
+        await perform { try $0.setLocked(locked, for: bundleIdentifier) }
+    }
+
+    // MARK: - 失效记录
+
+    /// 请求清理：只记下待确认项，不落盘。
+    public func requestForget(_ bundleIdentifier: String) {
+        pendingForget = missing.first { $0.bundleIdentifier == bundleIdentifier }
+    }
+
+    public func cancelForget() {
+        pendingForget = nil
+    }
+
+    public func confirmForget() async {
+        guard let pendingForget else { return }
+        let bundleIdentifier = pendingForget.bundleIdentifier
+        await perform { try $0.forget(bundleIdentifier: bundleIdentifier) }
+        self.pendingForget = nil
+    }
+
     // MARK: - 内部
 
     /// 跑一次变更，无论成败都重新读一遍快照。
@@ -149,14 +246,41 @@ public final class ConsoleModel {
 
     private func apply(_ snapshot: LibrarySnapshot) {
         groups = snapshot.groups
+        missing = snapshot.missing
 
-        // 选中的分组没了（被删掉）或还没选过时，落到「未分类」——
+        // 选中的东西没了（分组被删、最后一条失效记录被清理）或还没选过时，落回「未分类」——
         // 右侧永远有确定的内容，不会出现「左边没选中、右边一片空白」。
-        let stillExists = snapshot.groups.contains { $0.group.id == selectedGroupID }
-        if !stillExists {
-            selectedGroupID = snapshot.groups.first { $0.group.isUngrouped }?.group.id
-                ?? snapshot.groups.first?.group.id
+        if selection == nil || !isAvailable(selection, in: snapshot) {
+            selection = snapshot.groups.first { $0.group.isUngrouped }
+                .map { .group($0.group.id) }
+                ?? snapshot.groups.first.map { .group($0.group.id) }
         }
+
+        // 详情面板跟着列表走：换了分组、或者那条记录被清掉了，原先选中的应用就不该再显示。
+        if let selectedApplicationID, !isListed(selectedApplicationID) {
+            self.selectedApplicationID = nil
+        }
+    }
+
+    private func isAvailable(_ selection: ConsoleSelection?, in snapshot: LibrarySnapshot) -> Bool {
+        switch selection {
+        case .group(let id): snapshot.groups.contains { $0.group.id == id }
+        case .missing: !snapshot.missing.isEmpty
+        case nil: false
+        }
+    }
+
+    /// 某个应用在当前这一栏里还找得到吗。
+    private func isListed(_ bundleIdentifier: String) -> Bool {
+        switch selection {
+        case .missing: missing.contains { $0.bundleIdentifier == bundleIdentifier }
+        case .group: applications.contains { $0.bundleIdentifier == bundleIdentifier }
+        case nil: false
+        }
+    }
+
+    private func groupName(ofGroup id: String) -> String? {
+        groups.first { $0.group.id == id }?.group.name
     }
 
     /// 把 `onMove` 的落点换算成移除该元素之后的下标。

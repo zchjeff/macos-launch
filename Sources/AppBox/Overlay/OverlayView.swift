@@ -2,6 +2,8 @@ import AppBoxCore
 import SwiftUI
 
 /// 覆盖层网格：渲染 `LibrarySnapshot` 里的真实应用，单击启动并收起。
+///
+/// 用的是「可见」那一份投影：被隐藏的应用不出现在覆盖层的任何位置。
 struct OverlayView: View {
     let snapshot: LibrarySnapshot
     let onLaunch: (ApplicationEntry) -> Void
@@ -24,7 +26,7 @@ struct OverlayView: View {
                     ),
                     spacing: 28
                 ) {
-                    ForEach(snapshot.allApplications) { entry in
+                    ForEach(snapshot.visibleApplications) { entry in
                         TileView(entry: entry) { onLaunch(entry) }
                     }
                 }

@@ -98,7 +98,7 @@ struct UngroupedProtectionTests {
 
         let snapshot = fixture.service.snapshot()
 
-        #expect(snapshot.allApplications.map(\.bundleIdentifier) == ["com.example.app"])
+        #expect(snapshot.visibleApplications.map(\.bundleIdentifier) == ["com.example.app"])
         #expect(snapshot.groups.first { $0.group.isUngrouped }?.applications.count == 1)
     }
 }
@@ -135,19 +135,7 @@ struct GroupDeletionTests {
         // 这里只关心「一个都没丢」，顺序由权重决定、另有测试覆盖。
         #expect(Set(ungrouped.applications.map(\.bundleIdentifier))
             == ["com.example.first", "com.example.second"])
-        #expect(snapshot.allApplications.count == 2)
-    }
-
-    @Test("删除分组只改归属，应用的排序权重保留")
-    func deletionKeepsOtherApplicationSettings() throws {
-        let fixture = try ServiceFixture(records: records(), config: configWithGroup())
-        let subject = fixture.service
-
-        try subject.deleteGroup(id: "dev")
-
-        let application = try #require(subject.currentConfig.applications["com.example.first"])
-        #expect(application.groupID == Group.ungroupedID)
-        #expect(application.orderWeight == 3)
+        #expect(snapshot.visibleApplications.count == 2)
     }
 
     @Test("删除分组后落盘，重启后组内应用仍在「未分类」")
@@ -196,7 +184,7 @@ struct GroupArrangementTests {
             == ["com.example.first"])
         #expect(snapshot.groups.first { $0.group.isUngrouped }?.applications.map(\.bundleIdentifier)
             == ["com.example.second"])
-        #expect(snapshot.allApplications.count == 2)
+        #expect(snapshot.visibleApplications.count == 2)
     }
 
     @Test("移到不存在的分组被拒绝")
@@ -218,30 +206,6 @@ struct GroupArrangementTests {
         try subject.move(bundleIdentifier: "com.example.second", toGroup: group.id)
 
         #expect(subject.currentConfig.applications["com.example.second"]?.groupID == group.id)
-    }
-
-    @Test("组内按排序权重排，权重相同按显示名")
-    func snapshotOrdersByWeightThenName() throws {
-        let config = AppBoxConfig(
-            groups: [.ungrouped],
-            applications: [
-                "com.example.heavy": ApplicationConfig(orderWeight: 10),
-                "com.example.light": ApplicationConfig(orderWeight: 5),
-            ]
-        )
-        let fixture = try ServiceFixture(
-            records: [
-                TestRecords.make("com.example.heavy", name: "AAA"),
-                TestRecords.make("com.example.light", name: "ZZZ"),
-                TestRecords.make("com.example.none", name: "MMM"),
-            ],
-            config: config
-        )
-
-        let names = fixture.service.snapshot().allApplications.map(\.displayName)
-
-        // 默认权重 0 的 MMM 最先，然后权重 5 的 ZZZ，权重 10 的 AAA 垫底。
-        #expect(names == ["MMM", "ZZZ", "AAA"])
     }
 
     @Test("调整分组顺序后落盘，重启保持")

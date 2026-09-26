@@ -349,8 +349,8 @@ struct ConsoleApplicationTests {
         #expect(fixture.service.currentConfig.applications.isEmpty)
     }
 
-    @Test("排过序之后新装的应用排在最前面，而不是插进中间")
-    func newApplicationSortsFirstAfterManualOrder() async throws {
+    @Test("排过序之后新装的应用排在末尾，而不是插进排好的队列")
+    func newApplicationSortsLastAfterManualOrder() async throws {
         let fixture = try ServiceFixture(records: [
             TestRecords.make("com.example.first", name: "First"),
             TestRecords.make("com.example.second", name: "Second"),
@@ -360,7 +360,7 @@ struct ConsoleApplicationTests {
         await model.move("com.example.second", onto: "com.example.first", placeAfter: false)
         #expect(model.applications.map(\.bundleIdentifier) == ["com.example.second", "com.example.first"])
 
-        // 手排过之后，没排过的新应用权重仍是默认的 0，排在所有编号之前。
+        // 手排过之后，没排过的新应用权重仍是默认的 0，排在所有编号之后。
         fixture.scanner.setRecords([
             TestRecords.make("com.example.first", name: "First"),
             TestRecords.make("com.example.second", name: "Second"),
@@ -369,7 +369,7 @@ struct ConsoleApplicationTests {
         await model.refresh()
 
         #expect(model.applications.map(\.bundleIdentifier)
-            == ["com.example.znew", "com.example.second", "com.example.first"])
+            == ["com.example.second", "com.example.first", "com.example.znew"])
     }
 
     @Test("排序只动被拖的那一组，别的组不受影响")
@@ -386,5 +386,284 @@ struct ConsoleApplicationTests {
         let ungrouped = try #require(model.groups.first { $0.group.isUngrouped })
         #expect(ungrouped.applications.map(\.bundleIdentifier) == ["com.example.second"])
         #expect(model.applications.map(\.bundleIdentifier) == ["com.example.third", "com.example.first"])
+    }
+}
+
+@MainActor
+@Suite("控制台：别名与隐藏")
+struct ConsoleApplicationSettingsTests {
+    private func fixture() throws -> ServiceFixture {
+        try ServiceFixture(records: [
+            TestRecords.make("com.example.keep", name: "Keep"),
+            TestRecords.make("com.example.hide", name: "Hide"),
+        ])
+    }
+
+    @Test("设置别名后列表显示别名，详情里真实名称还在")
+    func aliasShowsInListAndDetail() async throws {
+        let model = ConsoleModel(service: try fixture().service)
+        await model.refresh()
+        model.selectedApplicationID = "com.example.keep"
+
+        await model.setAlias("编辑器", for: "com.example.keep")
+
+        #expect(model.applications.first { $0.bundleIdentifier == "com.example.keep" }?.displayName == "编辑器")
+        #expect(model.detail?.realName == "Keep")
+        #expect(model.detail?.alias == "编辑器")
+    }
+
+    @Test("清除别名后恢复真实名称")
+    func clearingAliasRestoresRealName() async throws {
+        let model = ConsoleModel(service: try fixture().service)
+        await model.refresh()
+        model.selectedApplicationID = "com.example.keep"
+        await model.setAlias("编辑器", for: "com.example.keep")
+
+        await model.setAlias("", for: "com.example.keep")
+
+        #expect(model.applications.first { $0.bundleIdentifier == "com.example.keep" }?.displayName == "Keep")
+        #expect(model.detail?.alias == nil)
+    }
+
+    @Test("别名落盘，重启后还在")
+    func aliasSurvivesRestart() async throws {
+        let fixture = try fixture()
+        let model = ConsoleModel(service: fixture.service)
+        await model.refresh()
+        await model.setAlias("编辑器", for: "com.example.keep")
+
+        let reopened = ConsoleModel(service: fixture.service)
+        await reopened.refresh()
+
+        #expect(reopened.applications.first { $0.bundleIdentifier == "com.example.keep" }?.displayName == "编辑器")
+    }
+
+    @Test("隐藏后它从覆盖层消失，控制台里仍看得见、也能恢复")
+    func hidingKeepsApplicationInConsole() async throws {
+        let model = ConsoleModel(service: try fixture().service)
+        await model.refresh()
+
+        await model.setHidden(true, for: "com.example.hide")
+
+        // 控制台列表：还在，只是标上了「已隐藏」。
+        #expect(model.applications.map(\.bundleIdentifier) == ["com.example.hide", "com.example.keep"])
+        #expect(model.applications.first { $0.bundleIdentifier == "com.example.hide" }?.isHidden == true)
+        // 覆盖层：连分组的缩略图里都没有它。
+        let ungrouped = try #require(model.groups.first { $0.group.isUngrouped })
+        #expect(ungrouped.visibleApplications.map(\.bundleIdentifier) == ["com.example.keep"])
+
+        await model.setHidden(false, for: "com.example.hide")
+
+        let restored = try #require(model.groups.first { $0.group.isUngrouped })
+        #expect(restored.visibleApplications.map(\.bundleIdentifier)
+            == ["com.example.hide", "com.example.keep"])
+    }
+
+    @Test("锁定后位置被别人挤不动，解锁后又能排")
+    func lockingPinsThePosition() async throws {
+        let fixture = try fixture()
+        let model = ConsoleModel(service: fixture.service)
+        await model.refresh()
+        model.selectedApplicationID = "com.example.hide"
+        // 当前顺序：Hide、Keep。锁住排头那个。
+        #expect(model.applications.map(\.bundleIdentifier)
+            == ["com.example.hide", "com.example.keep"])
+
+        await model.setLocked(true, for: "com.example.hide")
+
+        #expect(model.detail?.isLocked == true)
+
+        // 名字排在 Hide 前面的新应用：没锁定的话它会插到最前面去。
+        fixture.scanner.setRecords([
+            TestRecords.make("com.example.aaa", name: "AAA"),
+            TestRecords.make("com.example.keep", name: "Keep"),
+            TestRecords.make("com.example.hide", name: "Hide"),
+        ])
+        await model.refresh()
+        #expect(model.applications.map(\.bundleIdentifier)
+            == ["com.example.hide", "com.example.keep", "com.example.aaa"])
+
+        await model.setLocked(false, for: "com.example.hide")
+        await model.move("com.example.aaa", onto: "com.example.keep", placeAfter: false)
+        #expect(model.applications.map(\.bundleIdentifier)
+            == ["com.example.hide", "com.example.aaa", "com.example.keep"])
+    }
+}
+
+@MainActor
+@Suite("控制台：应用详情")
+struct ConsoleDetailTests {
+    private func model() async throws -> ConsoleModel {
+        let fixture = try ServiceFixture(
+            records: [
+                TestRecords.make("com.example.first", name: "First", path: "/Applications/First.app"),
+                TestRecords.make("com.example.second", name: "Second"),
+            ]
+        )
+        let model = ConsoleModel(service: fixture.service)
+        await model.refresh()
+        return model
+    }
+
+    @Test("没选中应用时详情面板是空的")
+    func detailIsEmptyWithoutSelection() async throws {
+        let model = try await model()
+
+        #expect(model.selectedApplicationID == nil)
+        #expect(model.detail == nil)
+    }
+
+    @Test("选中应用后详情说清它是谁、在哪、归哪一组")
+    func detailDescribesSelectedApplication() async throws {
+        let model = try await model()
+
+        model.selectedApplicationID = "com.example.first"
+
+        let detail = try #require(model.detail)
+        #expect(detail.realName == "First")
+        #expect(detail.bundleIdentifier == "com.example.first")
+        #expect(detail.lastKnownPath == "/Applications/First.app")
+        #expect(detail.groupName == "未分类")
+        #expect(detail.isHidden == false)
+        #expect(detail.isLocked == false)
+        #expect(detail.isMissing == false)
+    }
+
+    @Test("详情里的分组名是它所在的那一组")
+    func detailNamesTheOwningGroup() async throws {
+        let model = try await model()
+        await model.createGroup(named: "开发")
+        let dev = try #require(model.selectedGroupID)
+        await model.move("com.example.first", toGroup: dev)
+
+        model.selectedApplicationID = "com.example.first"
+
+        #expect(model.detail?.groupName == "开发")
+    }
+
+    @Test("换分组后原先选中的应用不再占着详情面板")
+    func selectionClearsWhenGroupChanges() async throws {
+        let model = try await model()
+        model.selectedApplicationID = "com.example.first"
+        #expect(model.detail != nil)
+
+        await model.createGroup(named: "开发")
+
+        #expect(model.selectedApplicationID == nil)
+        #expect(model.detail == nil)
+    }
+
+    @Test("选中失效记录：详情说得出别名、最后位置与「已失效」")
+    func detailDescribesMissingRecord() async throws {
+        let fixture = try ServiceFixture(
+            config: AppBoxConfig(
+                groups: [.ungrouped, Group(id: "dev", name: "开发")],
+                applications: [
+                    "com.example.gone": ApplicationConfig(
+                        groupID: "dev",
+                        alias: "走丢的",
+                        hidden: true,
+                        lastKnownPath: "/Applications/Gone.app"
+                    )
+                ]
+            )
+        )
+        let model = ConsoleModel(service: fixture.service)
+        await model.refresh()
+
+        model.selection = .missing
+        model.selectedApplicationID = "com.example.gone"
+
+        let detail = try #require(model.detail)
+        #expect(detail.isMissing)
+        #expect(detail.realName == nil)
+        #expect(detail.alias == "走丢的")
+        #expect(detail.lastKnownPath == "/Applications/Gone.app")
+        #expect(detail.groupName == "开发")
+        #expect(detail.isHidden)
+    }
+}
+
+@MainActor
+@Suite("控制台：失效列表与清理")
+struct ConsoleMissingTests {
+    private func fixture() throws -> ServiceFixture {
+        try ServiceFixture(config: AppBoxConfig(
+            groups: [.ungrouped, Group(id: "dev", name: "开发")],
+            applications: [
+                "com.example.gone": ApplicationConfig(
+                    groupID: "dev",
+                    alias: "走丢的",
+                    lastKnownPath: "/Applications/Gone.app"
+                )
+            ]
+        ))
+    }
+
+    @Test("失效列表就是「配置里有、磁盘上找不到」的那些")
+    func listsMissingApplications() async throws {
+        let model = ConsoleModel(service: try fixture().service)
+
+        await model.refresh()
+
+        #expect(model.missing.map(\.bundleIdentifier) == ["com.example.gone"])
+    }
+
+    @Test("只请求清理时，配置一个字节都没动")
+    func requestDoesNotTouchConfig() async throws {
+        let fixture = try fixture()
+        let model = ConsoleModel(service: fixture.service)
+        await model.refresh()
+
+        model.requestForget("com.example.gone")
+
+        #expect(model.forgetConfirmationMessage?.contains("走丢的") == true)
+        #expect(model.forgetConfirmationMessage?.contains("别名") == true)
+        // 另起一个服务 = 从磁盘重读：记录还在。
+        #expect(fixture.service.currentConfig.applications["com.example.gone"] != nil)
+    }
+
+    @Test("取消清理后什么都没发生")
+    func cancelLeavesEverythingAlone() async throws {
+        let fixture = try fixture()
+        let model = ConsoleModel(service: fixture.service)
+        await model.refresh()
+
+        model.requestForget("com.example.gone")
+        model.cancelForget()
+
+        #expect(model.pendingForget == nil)
+        #expect(model.forgetConfirmationMessage == nil)
+        #expect(fixture.service.currentConfig.applications["com.example.gone"] != nil)
+    }
+
+    @Test("确认清理后记录连同别名、分组一起消失，重启后仍然没有")
+    func confirmForgetsTheRecord() async throws {
+        let fixture = try fixture()
+        let model = ConsoleModel(service: fixture.service)
+        await model.refresh()
+        model.selection = .missing
+
+        model.requestForget("com.example.gone")
+        await model.confirmForget()
+
+        #expect(model.pendingForget == nil)
+        #expect(model.missing.isEmpty)
+        #expect(fixture.service.currentConfig.applications["com.example.gone"] == nil)
+        // 清完最后一笔，界面落回「未分类」，不会停在一栏已经不存在的列表上。
+        #expect(model.selectedGroupID == Group.ungroupedID)
+    }
+
+    @Test("清理一条不在列表里的记录：什么都不发生，也不报错")
+    func forgettingUnknownRecordIsHarmless() async throws {
+        let model = ConsoleModel(service: try fixture().service)
+        await model.refresh()
+
+        model.requestForget("com.example.never")
+
+        #expect(model.pendingForget == nil)
+        await model.confirmForget()
+        #expect(model.errorMessage == nil)
+        #expect(model.missing.map(\.bundleIdentifier) == ["com.example.gone"])
     }
 }
