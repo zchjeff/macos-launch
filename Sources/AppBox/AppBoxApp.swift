@@ -2,7 +2,21 @@ import AppBoxCore
 import AppKit
 import SwiftUI
 
+/// 进程入口。
+///
+/// 单独抽出 `main` 是为了让调试命令在 SwiftUI 启动之前就返回——
+/// 否则 `WindowGroup` 会先闪一下窗口再退出。
 @main
+enum EntryPoint {
+    static func main() {
+        if CommandLine.arguments.contains("--scan") {
+            ScanCommand.run()
+            return
+        }
+        AppBoxApp.main()
+    }
+}
+
 struct AppBoxApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
 
