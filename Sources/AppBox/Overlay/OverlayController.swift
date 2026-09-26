@@ -77,13 +77,23 @@ final class OverlayController {
     func hide() {
         guard isVisible else { return }
 
+        let restoreFocusTo = previousApp
+        hideWithoutRestoringFocus()
+        // 把焦点还给唤起覆盖层之前的前台应用，否则用户回到原应用还得再点一次。
+        _ = restoreFocusTo?.activate(options: [])
+    }
+
+    /// 收起覆盖层但不把焦点还回去。
+    ///
+    /// 从 Dock 图标进控制台时用它：接下来要开控制台窗口，
+    /// 先把焦点还给别的应用再抢回来，中间会闪一下，还可能把控制台挤掉 key window。
+    func hideWithoutRestoringFocus() {
+        guard isVisible else { return }
+
         removeEscapeMonitor()
         window?.orderOut(nil)
         isVisible = false
         onVisibilityChange?(false)
-
-        // 把焦点还给唤起覆盖层之前的前台应用，否则用户回到原应用还得再点一次。
-        _ = previousApp?.activate(options: [])
         previousApp = nil
     }
 

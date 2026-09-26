@@ -145,6 +145,27 @@ public final class LibraryService: @unchecked Sendable {
         }
     }
 
+    /// 按给定顺序重排组内应用：数组下标即新的排序权重。
+    ///
+    /// 顺序由调用方给出，而不是服务自己按权重和名字重算：界面上的先后还取决于别名，
+    /// 而别名要等 011 才进配置，服务自己算出来的序会和用户看到的那一列对不上。
+    ///
+    /// 权重从 1 开始编（不是 0）。0 是「还没有排序记录」的默认权重，留出这一档，
+    /// 新装的应用就会排在手排过的分组前面，而不是插进中间。
+    public func reorder(groupID: String, to bundleIdentifiers: [String]) throws {
+        try mutate { config in
+            guard config.groups.contains(where: { $0.id == groupID }) else {
+                throw GroupError.groupNotFound(groupID)
+            }
+            for (position, bundleIdentifier) in bundleIdentifiers.enumerated() {
+                var application = config.applications[bundleIdentifier] ?? ApplicationConfig()
+                application.groupID = groupID
+                application.orderWeight = position + 1
+                config.applications[bundleIdentifier] = application
+            }
+        }
+    }
+
     // MARK: - 内部
 
     /// 先落盘、成功了再认这次改动，避免内存与磁盘各说各话。

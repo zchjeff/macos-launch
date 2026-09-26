@@ -63,6 +63,21 @@ cat >"$CONTENTS/Info.plist" <<PLIST
 	<string>$MIN_MACOS</string>
 	<key>NSHighResolutionCapable</key>
 	<true/>
+	<key>UTExportedTypeDeclarations</key>
+	<array>
+		<dict>
+			<key>UTTypeIdentifier</key>
+			<string>com.ethicall.appbox.application</string>
+			<key>UTTypeDescription</key>
+			<string>AppBox 应用引用</string>
+			<key>UTTypeConformsTo</key>
+			<array>
+				<string>public.data</string>
+			</array>
+			<key>UTTypeTagSpecification</key>
+			<dict/>
+		</dict>
+	</array>
 </dict>
 </plist>
 PLIST

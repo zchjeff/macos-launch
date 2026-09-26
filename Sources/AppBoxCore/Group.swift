@@ -44,3 +44,22 @@ public enum GroupError: Error, Equatable {
     /// 目标应用或目标分组不存在——多半是配置已经被别处改过了。
     case applicationNotFound(String)
 }
+
+/// 错误要说给人听。
+///
+/// 界面上的每一次拒绝都得有个说法——「点了没反应」和「操作被拒绝」在用户眼里是同一件事，
+/// 而前者看起来就是坏掉了。
+extension GroupError: LocalizedError {
+    public var errorDescription: String? {
+        switch self {
+        case .ungroupedIsProtected:
+            "「未分类」是系统保留分组，不能删除也不能重命名"
+        case .groupNotFound(let id):
+            "找不到分组「\(id)」，配置可能已被别处改动"
+        case .emptyName:
+            "分组名不能为空"
+        case .applicationNotFound(let id):
+            "找不到应用「\(id)」，配置可能已被别处改动"
+        }
+    }
+}

@@ -37,6 +37,20 @@ public enum ConfigStoreError: Error, Equatable {
     case wouldOverwriteNewerSchema(found: Int, supported: Int)
 }
 
+extension ConfigStoreError: LocalizedError {
+    public var errorDescription: String? {
+        switch self {
+        case .invalidProfileName(let name):
+            "「\(name)」不能用作方案名"
+        case .unsupportedSchema(let version):
+            "配置版本 \(version) 太旧，本程序没有从那一版升上来的路径"
+        case .wouldOverwriteNewerSchema(let found, let supported):
+            "磁盘上的配置是版本 \(found)，比本程序支持的 \(supported) 新，"
+                + "写下去会抹掉不认识的字段，已拒绝写入"
+        }
+    }
+}
+
 /// 配置文件的读写。
 ///
 /// 一个方案一个 JSON 文件，直接放在 Application Support 的 AppBox 目录下，
