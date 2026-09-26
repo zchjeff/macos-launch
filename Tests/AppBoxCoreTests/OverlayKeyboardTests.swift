@@ -92,25 +92,6 @@ struct GridNavigationTests {
     }
 }
 
-@Suite("覆盖层键盘：字母跳转")
-struct GridTypeAheadTests {
-    @Test("跳到名称以该字符开头的第一项，不分大小写")
-    func jumpsToFirstMatch() {
-        let names = ["微信", "Weather", "calendar", "Chess", "1Password"]
-
-        #expect(GridNavigation.firstIndex(matching: "w", in: names) == 1)
-        #expect(GridNavigation.firstIndex(matching: "C", in: names) == 2)
-        #expect(GridNavigation.firstIndex(matching: "1", in: names) == 4)
-        #expect(GridNavigation.firstIndex(matching: "微", in: names) == 0)
-    }
-
-    @Test("没有以它开头的项就什么也不做")
-    func noMatchMeansNoJump() {
-        #expect(GridNavigation.firstIndex(matching: "z", in: ["微信", "Weather"]) == nil)
-        #expect(GridNavigation.firstIndex(matching: "W", in: []) == nil)
-    }
-}
-
 @MainActor
 @Suite("覆盖层：键盘高亮")
 struct OverlaySelectionTests {
@@ -239,19 +220,5 @@ struct OverlaySelectionTests {
         #expect(model.activation(in: items) == .launch(entry))
         model.move(.right, columns: 7, in: items)
         #expect(model.activation(in: items) == .openGroup("dev"))
-    }
-
-    @Test("字母跳转：跳到名称以它开头的第一项，找不到就不动")
-    func jumpToFirstMatch() {
-        let model = OverlayModel()
-        let items = tiles(["微信", "Weather", "Calendar"])
-        model.move(.right, columns: 7, in: items)
-        #expect(model.selection == 1)
-
-        model.jump(toFirstMatching: "C", in: items)
-        #expect(model.selection == 2)
-
-        model.jump(toFirstMatching: "z", in: items)
-        #expect(model.selection == 2)
     }
 }

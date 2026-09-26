@@ -69,6 +69,8 @@ final class OverlayController {
         installKeyboardMonitor()
         isVisible = true
         onVisibilityChange?(true)
+        // 直接敲字就该进搜索框：焦点在唤起时就给上，用户不需要先点它。
+        model.requestSearchFocus()
 
         // 唤起路径上不读盘（ticket 017 的硬性要求）：先把窗口摆出来，
         // 再让重扫描在后台跑。清单多数时候没变，`render` 会因此什么都不做。
@@ -161,13 +163,20 @@ final class OverlayController {
         // 打开着的分组可能在控制台里被删掉了，那层子网格得自己退掉。
         model.reconcile(with: snapshot)
         guard let hostingView, snapshot != renderedSnapshot else { return }
-        hostingView.rootView = OverlayView(
+        hostingView.rootView = rootView(for: snapshot)
+        renderedSnapshot = snapshot
+    }
+
+    /// 视图的装配只此一处：建窗与换快照都从这里取，两条路不会再把
+    /// `onLaunch` / `onDismiss` 接歪一个——先前建窗用的是空闭包，且要等
+    /// 快照真的变了才会被换掉，磁盘没动的时候单击图标就一直不响应。
+    private func rootView(for snapshot: LibrarySnapshot) -> OverlayView {
+        OverlayView(
             snapshot: snapshot,
             model: model,
             onLaunch: { [weak self] entry in self?.activate(entry) },
             onDismiss: { [weak self] in self?.hide() }
         )
-        renderedSnapshot = snapshot
     }
 
     private func makeWindow(for screen: NSScreen) -> OverlayWindow {
@@ -190,12 +199,7 @@ final class OverlayController {
 
         // 第一次建窗时用预热好的那份快照，首屏立刻有内容；随后后台再校一遍。
         let hostingView = NSHostingView(
-            rootView: OverlayView(
-                snapshot: latestSnapshot ?? LibrarySnapshot(groups: []),
-                model: model,
-                onLaunch: { _ in },
-                onDismiss: {}
-            )
+            rootView: rootView(for: latestSnapshot ?? LibrarySnapshot(groups: []))
         )
         renderedSnapshot = latestSnapshot
         self.hostingView = hostingView
@@ -217,10 +221,15 @@ final class OverlayController {
 
             var handled = false
             MainActor.assumeIsolated {
+                // 搜索框攥着焦点时，文字与退格交给输入框自己收（输入法的组合也走它），
+                // 导航键仍然由这里接管。
+                let isTypingInSearchField = (NSApp.keyWindow?.firstResponder as? NSTextView)?
+                    .isFieldEditor == true
                 handled = self?.handleKey(
                     keyCode: keyCode,
                     character: character,
-                    hasSystemModifier: hasSystemModifier
+                    hasSystemModifier: hasSystemModifier,
+                    isTypingInSearchField: isTypingInSearchField
                 ) ?? false
             }
             // 消费掉的按键不再往响应链上走：ScrollView 自己也会响应方向键，
@@ -237,10 +246,20 @@ final class OverlayController {
     }
 
     /// 返回 true 表示这次按键被覆盖层消费掉了。
-    private func handleKey(keyCode: UInt16, character: Character?, hasSystemModifier: Bool) -> Bool {
+    private func handleKey(
+        keyCode: UInt16,
+        character: Character?,
+        hasSystemModifier: Bool,
+        isTypingInSearchField: Bool
+    ) -> Bool {
         if keyCode == UInt16(kVK_Escape) {
-            // 子网格里 Esc 先回顶层，顶层才轮到收起覆盖层。
-            if !model.back() { hide() }
+            // 搜索中 Esc 先清查询（回到来时的层级），子网格里先回顶层，顶层才收起。
+            if model.isSearching {
+                model.clearSearch()
+                model.updateSearch(in: currentSnapshot)
+            } else if !model.back() {
+                hide()
+            }
             return true
         }
 
@@ -256,20 +275,40 @@ final class OverlayController {
             model.move(.down, columns: OverlayGrid.columns, in: tiles)
         case UInt16(kVK_Return), UInt16(kVK_ANSI_KeypadEnter):
             activateSelection(in: tiles)
+        case UInt16(kVK_Delete):
+            // 位在输入框里时退格归它管；这里管的是"焦点不在输入框"的兜底，
+            // 顺便把退格吃掉，免得系统为此响一声。
+            guard !isTypingInSearchField else { return false }
+            model.deleteLastQueryCharacter()
+            model.updateSearch(in: currentSnapshot)
         default:
-            // 方向键自身带着 .function 标记，所以修饰键这一关只卡字母这一路：
-            // 带 ⌘/⌃/⌥ 的组合键留给系统与菜单（⌘Q 之类）。
-            guard !hasSystemModifier, let character, character.isLetter || character.isNumber else {
+            // 方向键自身带着 .function 标记，所以修饰键这一关只卡文字这一路：
+            // 带 ⌘/⌃/⌥ 的组合键留给系统与菜单（⌘Q、⌘V 之类）。
+            guard !hasSystemModifier, let character, Self.isSearchInput(character) else {
                 return false
             }
-            model.jump(toFirstMatching: character, in: tiles)
+            // 输入框自己收字时，查询由它的绑定改、视图里的 onChange 负责重算。
+            guard !isTypingInSearchField else { return false }
+            model.type(String(character))
+            model.updateSearch(in: currentSnapshot)
+            model.requestSearchFocus()
         }
         return true
     }
 
-    /// 当前这一层摆着的格子。与视图画的是同一个投影。
+    /// 敲下去该进搜索框的字符：字母、数字、标点、符号与空格。
+    private static func isSearchInput(_ character: Character) -> Bool {
+        character.isLetter || character.isNumber || character.isPunctuation
+            || character.isSymbol || character == " "
+    }
+
+    /// 当前这一层摆着的格子。与视图画的是同一个投影（搜索时是结果清单）。
     private func currentTiles() -> [OverlayTile] {
-        latestSnapshot?.tiles(at: model.level) ?? []
+        model.tiles(in: currentSnapshot)
+    }
+
+    private var currentSnapshot: LibrarySnapshot {
+        latestSnapshot ?? LibrarySnapshot(groups: [])
     }
 
     /// 回车：单图标启动、方块展开——与鼠标点一下走的是同两条路。

@@ -44,15 +44,6 @@ public enum GridNavigation {
             return current + columns < count ? current + columns : current
         }
     }
-
-    /// 名称以某个字符开头的第一项。大小写不敏感。
-    ///
-    /// 只找第一个，重复按同一个字母不会往下轮——「轮着找」是搜索框（009）的活，
-    /// 键盘这条路径保持「一键一个确定的位置」。
-    public static func firstIndex(matching character: Character, in names: [String]) -> Int? {
-        let needle = String(character).lowercased()
-        return names.firstIndex { $0.lowercased().hasPrefix(needle) }
-    }
 }
 
 /// 高亮项被回车时要做的事。启动与展开是两条不同的路，这里只判类型，
@@ -86,6 +77,23 @@ public final class OverlayModel {
     /// 高亮会跑到第一个应用上，紧接着按回车启动的就是另一个东西了。
     private var topSelection = 0
 
+    /// 搜索框里的文字。空串表示没在搜索。
+    public private(set) var query = ""
+
+    /// 当前查询命中的应用。没在搜索时是空的。
+    public private(set) var searchResults: [ApplicationEntry] = []
+
+    /// 查询非空即搜索中。它是独立的一份状态：`query` 改完还要等
+    /// `updateSearch(in:)` 把结果算出来，两者之间隔着一次快照查询。
+    public private(set) var isSearching = false
+
+    /// 进搜索之前的高亮。清空查询后放回去，和子网格那套记忆同一道理。
+    private var selectionBeforeSearch = 0
+
+    /// 让搜索框抢焦点的令牌：控制器每次需要时 +1，视图监听它把焦点塞进输入框。
+    /// 焦点是视图的状态，但"什么时候该有焦点"由按键路径决定，两边就靠这个数对齐。
+    public private(set) var focusRequest = 0
+
     public init() {}
 
     /// 展开某个分组的子网格。
@@ -105,11 +113,15 @@ public final class OverlayModel {
         return true
     }
 
-    /// 每次唤起都从顶层开始，高亮也从头来。
+    /// 每次唤起都从顶层开始，高亮从头来，上次的搜索也忘干净。
     public func reset() {
         level = .top
         selection = 0
         topSelection = 0
+        query = ""
+        searchResults = []
+        isSearching = false
+        selectionBeforeSearch = 0
     }
 
     /// 挪一格高亮。`tiles` 是当前这一层的格子，由调用方从快照里取。
@@ -122,14 +134,6 @@ public final class OverlayModel {
         )
     }
 
-    /// 跳到名称以这个字符开头的第一项；没有就不动。
-    public func jump(toFirstMatching character: Character, in tiles: [OverlayTile]) {
-        guard let index = GridNavigation.firstIndex(matching: character, in: tiles.map(\.displayName)) else {
-            return
-        }
-        selection = index
-    }
-
     /// 高亮项被回车时该干什么。没有高亮项（空层）时是 nil。
     public func activation(in tiles: [OverlayTile]) -> OverlayActivation? {
         guard tiles.indices.contains(selection) else { return nil }
@@ -139,22 +143,85 @@ public final class OverlayModel {
         }
     }
 
-    /// 换了快照之后对一遍两件事。
+    // MARK: - 搜索
+
+    /// 输入一段文字（一个按键字符，或粘贴进来的一串）。
+    public func type(_ text: String) {
+        query += text
+    }
+
+    /// 整段换掉查询：输入框把编辑后的全文交给模型时走它（选中替换、粘贴、输入法改字）。
+    public func replaceQuery(_ text: String) {
+        query = text
+    }
+
+    /// 退格删掉最后一个字符。
+    public func deleteLastQueryCharacter() {
+        query = String(query.dropLast())
+    }
+
+    /// 清掉查询但不换层：结果与高亮由 `updateSearch` 一并复原。
+    public func clearSearch() {
+        query = ""
+    }
+
+    /// 按当前查询重算结果，顺带管进出搜索两头的状态。
+    ///
+    /// 查询从空变非空：进入搜索，把这一层的高亮记下来、高亮落到第一个结果上；
+    /// 从非空变空：退出搜索，层级不动，高亮放回原处。
+    /// 幂等——视图与控制器都可能触发它，重复调用不会把记忆搅乱。
+    public func updateSearch(in snapshot: LibrarySnapshot) {
+        guard !query.isEmpty else {
+            guard isSearching else { return }
+            isSearching = false
+            searchResults = []
+            selection = selectionBeforeSearch
+            return
+        }
+
+        if !isSearching {
+            isSearching = true
+            selectionBeforeSearch = selection
+            selection = 0
+        }
+        searchResults = AppSearch.results(for: query, in: snapshot)
+        selection = OverlayModel.clamped(selection, to: searchResults.count)
+    }
+
+    /// 当前该显示、该导航的格子：搜索时是结果清单，否则是这一层自己的。
+    /// 画出来的和键盘走的必须是同一份。
+    public func tiles(in snapshot: LibrarySnapshot) -> [OverlayTile] {
+        isSearching ? searchResults.map(OverlayTile.application) : snapshot.tiles(at: level)
+    }
+
+    /// 覆盖层需要搜索框拿焦点时喊一声。
+    public func requestSearchFocus() {
+        focusRequest += 1
+    }
+
+    /// 换了快照之后对一遍三件事。
     ///
     /// 一是打开的分组如果没了（在控制台里被删掉），退回顶层——不这么做的话，
     /// 覆盖层会停在一个「打开着但画不出东西」的状态里，用户看到的是一张顶层
     /// 网格，按 Esc 却要先「返回」一次才收得起来。
     ///
-    /// 二是把两处高亮都夹回新的格子数以内：应用被删掉或移出分组之后，
-    /// 高亮不能停在一个点不到的位置上。
+    /// 二是把高亮夹回格子数以内：应用被删掉或移出分组之后，
+    /// 高亮不能停在一个点不到的位置上。搜索中夹的是结果清单。
+    ///
+    /// 三是搜索中的结果重算一遍：新装的应用立刻可搜，删掉的当场消失。
     public func reconcile(with snapshot: LibrarySnapshot) {
         if case .group(let id) = level, !snapshot.groups.contains(where: { $0.group.id == id }) {
             level = .top
-            selection = topSelection
+            if !isSearching { selection = topSelection }
         }
 
         topSelection = OverlayModel.clamped(topSelection, to: snapshot.topLevelTiles.count)
-        selection = OverlayModel.clamped(selection, to: snapshot.tiles(at: level).count)
+        if isSearching {
+            searchResults = AppSearch.results(for: query, in: snapshot)
+            selection = OverlayModel.clamped(selection, to: searchResults.count)
+        } else {
+            selection = OverlayModel.clamped(selection, to: snapshot.tiles(at: level).count)
+        }
     }
 
     private static func clamped(_ index: Int, to count: Int) -> Int {
