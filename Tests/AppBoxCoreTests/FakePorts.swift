@@ -74,6 +74,38 @@ final class FakeLauncher: Launching, @unchecked Sendable {
     }
 }
 
+/// 记录开关调用的假登录项端口；`failOnSet` 用来模拟系统拒绝注册的场合。
+final class FakeLoginItem: LoginItemControlling, @unchecked Sendable {
+    private let lock = NSLock()
+    private var _status: Bool
+    private var _calls: [Bool] = []
+    var failOnSet = false
+
+    init(status: Bool = false) {
+        _status = status
+    }
+
+    var status: Bool {
+        lock.withLock { _status }
+    }
+
+    var calls: [Bool] {
+        lock.withLock { _calls }
+    }
+
+    func setEnabled(_ enabled: Bool) throws {
+        let fail = lock.withLock { () -> Bool in
+            if failOnSet { return true }
+            _status = enabled
+            _calls.append(enabled)
+            return false
+        }
+        if fail {
+            throw NSError(domain: "FakeLoginItem", code: 1, userInfo: [NSLocalizedDescriptionKey: "系统拒绝注册"])
+        }
+    }
+}
+
 /// 手动触发的假监听：测试想什么时候报「目录变了」就什么时候报。
 final class FakeWatcher: Watching, @unchecked Sendable {
     private let lock = NSLock()

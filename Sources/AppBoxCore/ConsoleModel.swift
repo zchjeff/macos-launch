@@ -41,6 +41,9 @@ public final class ConsoleModel {
     private var storedSelection: ConsoleSelection?
     /// 右侧列表里选中的应用——详情面板显示的就是它。
     public var selectedApplicationID: String?
+    /// 组内搜索的查询词。纯视图状态：过滤只影响「看得见哪些」，
+    /// 顺序、成员这些事实仍由 `applications` 那份完整列表说话。
+    public var query = ""
     /// 待确认的删除。界面据此弹确认框——**确认之前一个字节都不写**。
     public var pendingDeletion: GroupSnapshot?
     /// 待确认的清理。
@@ -51,11 +54,17 @@ public final class ConsoleModel {
     public private(set) var isLoading = false
     /// 正在跑的引导整理。nil 表示向导没在界面上。
     public private(set) var setup: SetupWizardModel?
+    /// 开机启动开关的界面状态。每次操作后按端口（系统真源）回填——
+    /// 注册失败时它会弹回原样，界面不会说谎。
+    public private(set) var isOpenAtLogin = false
 
     private let service: LibraryService
+    private let loginItem: any LoginItemControlling
 
-    public init(service: LibraryService) {
+    public init(service: LibraryService, loginItem: any LoginItemControlling = .disabled) {
         self.service = service
+        self.loginItem = loginItem
+        self.isOpenAtLogin = loginItem.status
     }
 
     // MARK: - 读
@@ -70,6 +79,14 @@ public final class ConsoleModel {
     /// 控制台要能看到它们、把它们恢复回来。
     public var applications: [ApplicationEntry] {
         groups.first { $0.group.id == selectedGroupID }?.applications ?? []
+    }
+
+    /// 当前分组里命中查询的应用；查询为空就是完整列表。
+    /// 隐藏的应用在控制台照常参与过滤——隐藏只管覆盖层，不管这里。
+    public var filteredApplications: [ApplicationEntry] {
+        let trimmed = query.trimmingCharacters(in: .whitespaces)
+        guard !trimmed.isEmpty else { return applications }
+        return applications.filter { AppSearch.matches(query: trimmed, entry: $0) }
     }
 
     public var selectedGroup: Group? {
@@ -237,6 +254,20 @@ public final class ConsoleModel {
     /// 锁定或解锁组内位置。
     public func setLocked(_ locked: Bool, for bundleIdentifier: String) async {
         await perform { try $0.setLocked(locked, for: bundleIdentifier) }
+    }
+
+    // MARK: - 开机启动
+
+    /// 开或关开机启动。这里不 `perform`：登录项归系统管，跟配置无关，
+    /// 重扫一遍应用纯属浪费。成败都以端口的最新状态回填，不凭乐观假设。
+    public func setOpenAtLogin(_ enabled: Bool) {
+        do {
+            try loginItem.setEnabled(enabled)
+            errorMessage = nil
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+        isOpenAtLogin = loginItem.status
     }
 
     // MARK: - 失效记录

@@ -12,7 +12,7 @@ final class ConsoleWindowController {
     private var window: NSWindow?
 
     init(service: LibraryService) {
-        model = ConsoleModel(service: service)
+        model = ConsoleModel(service: service, loginItem: SMAppServiceLoginItemController())
     }
 
     /// 每次打开都重读一遍分组结构：控制台关着的时候，覆盖层那边可能已经拖过了。

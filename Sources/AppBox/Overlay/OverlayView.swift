@@ -8,6 +8,9 @@ import SwiftUI
 struct OverlayView: View {
     let snapshot: LibrarySnapshot
     let model: OverlayModel
+    /// 顶部要让出的高度：有刘海的屏是刘海深度，其余屏幕为 0。
+    /// 搜索框贴着顶部摆，不让开就会被刘海压住。
+    var topInset: CGFloat = 0
     let onLaunch: (ApplicationEntry) -> Void
     let onDismiss: () -> Void
     /// 一次拖拽落地：哪一层、拖的是什么、容器坐标里的落点、那一层的格子位置。
@@ -33,6 +36,7 @@ struct OverlayView: View {
                 GroupGridView(
                     group: group,
                     model: model,
+                    topInset: topInset,
                     onLaunch: onLaunch,
                     onTapBlank: tapBlank,
                     onDrop: { item, point, frames in onDrop(.group(id), item, point, frames) }
@@ -70,22 +74,43 @@ struct OverlayView: View {
     }
 
     /// 顶部的搜索框。始终挂在最上层：在子网格里也能直接搜全库。
+    ///
+    /// 聚焦时描边换成强调色并带一圈柔光——毛玻璃底上单靠 1pt 灰线分不清
+    /// 「能输入」和「正在输入」。
     private var searchBar: some View {
         HStack(spacing: 8) {
             Image(systemName: "magnifyingglass")
                 .foregroundStyle(.secondary)
             TextField("搜索应用", text: queryBinding)
                 .textFieldStyle(.plain)
-                .font(.title3)
+                .font(.system(size: 15))
                 .focused($searchFocused)
-                .frame(width: 260)
+                .frame(width: 320)
+            if !model.query.isEmpty {
+                Button {
+                    clearSearch()
+                } label: {
+                    Image(systemName: "xmark.circle.fill")
+                        .foregroundStyle(.tertiary)
+                }
+                .buttonStyle(.plain)
+            }
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 9)
         .background(Capsule().fill(.background.opacity(0.8)))
-        .overlay(Capsule().strokeBorder(.quaternary))
+        .overlay {
+            // 未聚焦沿用原来的 .quaternary 细描边；聚焦换强调色。
+            if searchFocused {
+                Capsule().strokeBorder(Color.accentColor, lineWidth: 1.5)
+            } else {
+                Capsule().strokeBorder(.quaternary)
+            }
+        }
+        .shadow(color: searchFocused ? Color.accentColor.opacity(0.25) : .clear, radius: 6)
+        .animation(.easeOut(duration: 0.15), value: searchFocused)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-        .padding(.top, 14)
+        .padding(.top, 14 + topInset)
     }
 
     /// 输入框把编辑后的全文交回模型：写入、粘贴、输入法改字都从这一条路走。
@@ -128,7 +153,8 @@ struct OverlayView: View {
                     }
                 }
                 .padding(.horizontal, 60)
-                .padding(.vertical, 72)
+                .padding(.top, 72 + topInset)
+                .padding(.bottom, 72)
             }
             // 格子位置与落点必须是同一套数字：量法（`.named`）与落点（dropDestination）
             // 都以这一层为原点。
@@ -244,6 +270,8 @@ private struct SearchResultsView: View {
 private struct GroupGridView: View {
     let group: GroupSnapshot
     let model: OverlayModel
+    /// 刘海屏要让出的顶部高度，与搜索框同一份数字。
+    var topInset: CGFloat = 0
     let onLaunch: (ApplicationEntry) -> Void
     let onTapBlank: () -> Void
     /// 这一层上的一次拖拽落地（容器坐标 + 这一层的格子位置）。
@@ -311,7 +339,7 @@ private struct GroupGridView: View {
                     }
                 }
             }
-            .padding(.top, 64)
+            .padding(.top, 100 + topInset)
         }
         // 格子位置与落点都以这一层为原点，贴着两个网格一起量、一起收。
         .coordinateSpace(name: OverlayDropSpaces.group)
@@ -429,6 +457,8 @@ private struct ApplicationTile: View {
         }
         .buttonStyle(.plain)
         .onHover { isHovering = $0 }
+        .accessibilityLabel(entry.displayName)
+        .accessibilityValue(entry.isHidden ? "已隐藏" : "")
     }
 }
 
@@ -458,6 +488,8 @@ private struct FolderTileView: View {
         }
         .buttonStyle(.plain)
         .onHover { isHovering = $0 }
+        .accessibilityLabel(tile.name)
+        .accessibilityHint("分组，按下展开")
     }
 
     /// 不足 9 个时按实际数量排布，不留空占位；1 个时单个图标画大一点，

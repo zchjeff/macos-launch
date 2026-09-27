@@ -667,3 +667,112 @@ struct ConsoleMissingTests {
         #expect(model.missing.map(\.bundleIdentifier) == ["com.example.gone"])
     }
 }
+
+@MainActor
+@Suite("控制台：组内搜索过滤")
+struct ConsoleSearchFilterTests {
+    private func model() async throws -> ConsoleModel {
+        let fixture = try ServiceFixture(records: [
+            TestRecords.make("com.example.wechat", name: "微信"),
+            TestRecords.make("com.example.xcode", name: "Xcode"),
+            TestRecords.make("com.example.xmind", name: "XMind"),
+        ])
+        let model = ConsoleModel(service: fixture.service)
+        await model.refresh()
+        return model
+    }
+
+    @Test("查询命中名字：只留命中的行，顺序不变")
+    func filtersByDisplayName() async throws {
+        let model = try await model()
+        model.query = "xc"
+
+        #expect(model.filteredApplications.map(\.bundleIdentifier) == ["com.example.xcode"])
+    }
+
+    @Test("拼音缩写命中：wx 找到微信")
+    func filtersByPinyinInitials() async throws {
+        let model = try await model()
+        model.query = "wx"
+
+        #expect(model.filteredApplications.map(\.bundleIdentifier) == ["com.example.wechat"])
+    }
+
+    @Test("空查询不过滤：过滤结果与完整列表一致")
+    func emptyQueryShowsEverything() async throws {
+        let model = try await model()
+
+        #expect(model.filteredApplications.map(\.bundleIdentifier) == model.applications.map(\.bundleIdentifier))
+    }
+
+    @Test("过滤状态下重排仍作用于完整顺序：没命中的应用不掉队")
+    func reorderUnderFilterKeepsFullOrder() async throws {
+        let fixture = try ServiceFixture(records: [
+            TestRecords.make("com.example.wechat", name: "微信"),
+            TestRecords.make("com.example.xcode", name: "Xcode"),
+            TestRecords.make("com.example.xmind", name: "XMind"),
+        ])
+        let model = ConsoleModel(service: fixture.service)
+        await model.refresh()
+        model.query = "x"
+
+        await model.move("com.example.xmind", onto: "com.example.xcode", placeAfter: false)
+
+        // 过滤视图里 XMind 排到了 Xcode 前面；完整列表里微信（xin 整词命中）仍在第一。
+        #expect(model.filteredApplications.map(\.bundleIdentifier) == [
+            "com.example.wechat", "com.example.xmind", "com.example.xcode",
+        ])
+        let ungrouped = try #require(model.groups.first { $0.group.isUngrouped })
+        #expect(ungrouped.applications.map(\.bundleIdentifier) == [
+            "com.example.wechat", "com.example.xmind", "com.example.xcode",
+        ])
+    }
+
+    @Test("换分组时查询保留：搜索是视图状态，不该被选中项清掉")
+    func querySurvivesGroupChange() async throws {
+        let model = try await model()
+        model.query = "x"
+        await model.createGroup(named: "开发")
+
+        #expect(model.query == "x")
+        // 新分组是空的，过滤结果跟着空。
+        #expect(model.filteredApplications.isEmpty)
+    }
+}
+
+@MainActor
+@Suite("控制台：开机启动开关")
+struct ConsoleLoginItemTests {
+    @Test("开关的初值来自端口：系统里已注册就显示为开")
+    func reflectsPortStatusOnInit() async throws {
+        let loginItem = FakeLoginItem(status: true)
+        let model = ConsoleModel(service: try ServiceFixture().service, loginItem: loginItem)
+
+        #expect(model.isOpenAtLogin == true)
+    }
+
+    @Test("拨开再拨关：两次都调到端口，界面跟着走")
+    func togglingCallsPort() async throws {
+        let loginItem = FakeLoginItem()
+        let model = ConsoleModel(service: try ServiceFixture().service, loginItem: loginItem)
+
+        model.setOpenAtLogin(true)
+        #expect(model.isOpenAtLogin == true)
+
+        model.setOpenAtLogin(false)
+        #expect(model.isOpenAtLogin == false)
+        #expect(loginItem.calls == [true, false])
+    }
+
+    @Test("系统拒绝注册时弹回原样，并给出说法")
+    func failureRevertsSwitchAndReports() async throws {
+        let loginItem = FakeLoginItem()
+        loginItem.failOnSet = true
+        let model = ConsoleModel(service: try ServiceFixture().service, loginItem: loginItem)
+
+        model.setOpenAtLogin(true)
+
+        #expect(model.isOpenAtLogin == false)
+        #expect(model.errorMessage?.contains("系统拒绝注册") == true)
+    }
+}

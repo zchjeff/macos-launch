@@ -31,6 +31,40 @@ public protocol Watching: AnyObject, Sendable {
     func stop()
 }
 
+/// 开机启动（登录项）的读写。
+///
+/// 状态的真源是系统（登录项列表），不是本应用的配置——用户可以在「系统设置」里
+/// 把它关掉，界面必须跟着系统的说法走。实现放在 AppBox 一层（SMAppService），
+/// 这里只留端口供控制台模型接线与测试替换。
+public protocol LoginItemControlling: Sendable {
+    /// 当前是否已注册为登录项。
+    var status: Bool { get }
+    /// 注册或取消注册；失败时抛错，由调用方决定怎么说。
+    func setEnabled(_ enabled: Bool) throws
+}
+
+/// 没接端口时的占位：永远读不到、一开就报错。
+///
+/// 用于测试与「以不支持的方式运行」的场合——宁可响亮地失败，
+/// 也不静默显示一个拨了没反应的开关。
+public struct DisabledLoginItemController: LoginItemControlling {
+    public init() {}
+
+    public var status: Bool { false }
+
+    public func setEnabled(_ enabled: Bool) throws {
+        throw NSError(
+            domain: "AppBox",
+            code: 1,
+            userInfo: [NSLocalizedDescriptionKey: "当前运行方式不支持开机启动（需以 .app 形式运行）"]
+        )
+    }
+}
+
+extension LoginItemControlling where Self == DisabledLoginItemController {
+    public static var disabled: Self { Self() }
+}
+
 /// 把「图标缓存」与「图标渲染」接成 `IconProviding`。
 ///
 /// 两个组件分开是为了让缓存逻辑（命中/失效/写盘）不依赖 AppKit，可以单独测；

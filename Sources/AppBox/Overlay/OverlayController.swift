@@ -24,6 +24,8 @@ final class OverlayController {
     private var hotKey: GlobalHotKey?
     private var keyboardMonitor: Any?
     private var previousApp: NSRunningApplication?
+    /// 当前目标屏顶部要让开的高度（刘海的深度），每次唤起按当前屏重算。
+    private var topInset: CGFloat = 0
 
     private(set) var isVisible = false
 
@@ -133,12 +135,28 @@ final class OverlayController {
 
     /// 复用已建好的窗口，必要时把它挪到目标屏幕上。
     private func preparedWindow(for screen: NSScreen) -> OverlayWindow {
+        let inset = notchDepth(of: screen)
+        // 换屏后顶部让位可能不同（刘海屏 ↔ 外接屏）：值变了就重装配一次视图。
+        // 这次重建发生在窗口 orderFront 之前，不在绘制帧里，用户看不见。
+        if inset != topInset, let hostingView, let snapshot = latestSnapshot {
+            hostingView.rootView = rootView(for: snapshot)
+        }
+        topInset = inset
         let window = self.window ?? makeWindow(for: screen)
         self.window = window
         if window.frame != screen.frame {
             window.setFrame(screen.frame, display: false)
         }
         return window
+    }
+
+    /// 刘海屏顶部要让开的高度。`NSScreen.safeAreaInsets` 从 macOS 15 起提供；
+    /// 更早的系统没有刘海机型，按 0 处理。
+    private func notchDepth(of screen: NSScreen) -> CGFloat {
+        if #available(macOS 15.0, *) {
+            return screen.safeAreaInsets.top
+        }
+        return 0
     }
 
     /// 后台重算快照，回到主线程后再决定要不要重建视图。
@@ -174,6 +192,7 @@ final class OverlayController {
         OverlayView(
             snapshot: snapshot,
             model: model,
+            topInset: topInset,
             onLaunch: { [weak self] entry in self?.activate(entry) },
             onDismiss: { [weak self] in self?.hide() },
             onDrop: { [weak self] level, item, point, frames in
