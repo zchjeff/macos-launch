@@ -69,6 +69,35 @@ struct AppScannerTests {
         #expect(record.displayName == "Foo Bar")
     }
 
+    @Test("zh-Hans 本地化名收进 localizedName：英文名 WeChat 也认得「微信」")
+    func readsChineseLocalizedName() throws {
+        let tree = try AppTree()
+        let bundle = try tree.app(
+            "WeChat.app",
+            .valid(["CFBundleIdentifier": "com.tencent.xinWeChat", "CFBundleDisplayName": "WeChat"])
+        )
+        try tree.localizedStrings(["CFBundleDisplayName": "微信", "CFBundleName": "微信"], in: bundle)
+
+        let record = try #require(AppScanner().scan(roots: [tree.scanRoot]).first)
+        #expect(record.displayName == "WeChat")
+        #expect(record.localizedName == "微信")
+    }
+
+    @Test("没有中文本地化包时 localizedName 为 nil；与显示名相同的也不算")
+    func localizedNameIsNilWithoutChineseBundle() throws {
+        let tree = try AppTree()
+        try tree.app("Plain.app", .valid(["CFBundleIdentifier": "com.example.plain"]))
+        #expect(AppScanner().scan(roots: [tree.scanRoot]).first?.localizedName == nil)
+
+        let same = try tree.app(
+            "Same.app",
+            .valid(["CFBundleIdentifier": "com.example.same", "CFBundleDisplayName": "Same"])
+        )
+        try tree.localizedStrings(["CFBundleDisplayName": "Same"], in: same)
+        let records = AppScanner().scan(roots: [tree.scanRoot])
+        #expect(records.first { $0.bundleIdentifier == "com.example.same" }?.localizedName == nil)
+    }
+
     @Test("没有 CFBundleIdentifier 时，退化成绝对路径作为主键")
     func fallsBackToPathAsIdentifier() throws {
         let tree = try AppTree()

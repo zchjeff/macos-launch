@@ -61,6 +61,7 @@ public final class LibraryService: @unchecked Sendable {
                 bundleIdentifier: record.bundleIdentifier,
                 realName: record.displayName,
                 alias: application?.alias,
+                localizedName: record.localizedName,
                 path: record.path,
                 category: record.category,
                 iconCachePath: icons.iconURL(for: record)?.path,

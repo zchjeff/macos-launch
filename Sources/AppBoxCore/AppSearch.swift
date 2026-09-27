@@ -6,11 +6,12 @@ import Foundation
 /// 打汉字就两边都按字面比，打字母才把两边都转成拼音形式。用同一种形式，
 /// 前缀比较才有意义，「微信」「weixin」「wx」三条输入路径各有各的落点。
 public enum AppSearch {
-    /// 这条应用是否命中查询。匹配字段是真实名、别名、bundleID。
+    /// 这条应用是否命中查询。匹配字段是真实名、中文名、别名、bundleID。
     public static func matches(query: String, entry: ApplicationEntry) -> Bool {
         guard !literalForm(query).isEmpty else { return false }
 
         if matchesName(query, entry.realName) { return true }
+        if let localizedName = entry.localizedName, matchesName(query, localizedName) { return true }
         if let alias = entry.alias, matchesName(query, alias) { return true }
 
         return matchesBundleIdentifier(query, entry.bundleIdentifier)

@@ -10,6 +10,12 @@ public enum ConsoleSelection: Hashable, Sendable {
     case missing
 }
 
+/// 控制台搜索的范围：只搜当前分组，还是跨所有分组。
+public enum SearchScope: Hashable, Sendable {
+    case group
+    case all
+}
+
 /// 控制台的视图模型。
 ///
 /// 放在领域层是为了可测：「点了这个按钮会调什么、失败了会说什么」是这个切片真正的新逻辑，
@@ -41,9 +47,19 @@ public final class ConsoleModel {
     private var storedSelection: ConsoleSelection?
     /// 右侧列表里选中的应用——详情面板显示的就是它。
     public var selectedApplicationID: String?
-    /// 组内搜索的查询词。纯视图状态：过滤只影响「看得见哪些」，
+    /// 搜索的查询词。纯视图状态：过滤只影响「看得见哪些」，
     /// 顺序、成员这些事实仍由 `applications` 那份完整列表说话。
     public var query = ""
+    /// 搜索范围：只搜当前分组，还是跨所有分组。也是视图状态，不写盘。
+    /// 换范围时清掉选中应用：全组结果里的应用多半不在当前分组列表里，
+    /// 详情面板不该继续显示它（与换分组同一条规矩）。
+    public var searchScope: SearchScope = .group {
+        didSet {
+            if let selectedApplicationID, !isListed(selectedApplicationID) {
+                self.selectedApplicationID = nil
+            }
+        }
+    }
     /// 待确认的删除。界面据此弹确认框——**确认之前一个字节都不写**。
     public var pendingDeletion: GroupSnapshot?
     /// 待确认的清理。
@@ -81,12 +97,24 @@ public final class ConsoleModel {
         groups.first { $0.group.id == selectedGroupID }?.applications ?? []
     }
 
-    /// 当前分组里命中查询的应用；查询为空就是完整列表。
+    /// 命中查询的应用。范围是「全部」时按分组顺序横穿所有分组，否则只看当前分组；
+    /// 查询为空就是完整列表。
     /// 隐藏的应用在控制台照常参与过滤——隐藏只管覆盖层，不管这里。
     public var filteredApplications: [ApplicationEntry] {
+        let base = searchScope == .all ? allApplications : applications
         let trimmed = query.trimmingCharacters(in: .whitespaces)
-        guard !trimmed.isEmpty else { return applications }
-        return applications.filter { AppSearch.matches(query: trimmed, entry: $0) }
+        guard !trimmed.isEmpty else { return base }
+        return base.filter { AppSearch.matches(query: trimmed, entry: $0) }
+    }
+
+    /// 所有分组的应用拼成一列，顺序是「分组顺序 → 组内顺序」。
+    public var allApplications: [ApplicationEntry] {
+        groups.flatMap(\.applications)
+    }
+
+    /// 某个应用属于哪个分组——全组搜索结果里要给出处。
+    public func groupName(ofApplication id: String) -> String? {
+        groups.first { $0.applications.contains { $0.bundleIdentifier == id } }?.group.name
     }
 
     public var selectedGroup: Group? {
@@ -104,10 +132,12 @@ public final class ConsoleModel {
             return ApplicationDetail(record, groupName: groupName(ofGroup: record.groupID))
         }
 
-        guard let entry = applications.first(where: { $0.bundleIdentifier == selectedApplicationID }) else {
+        guard let entry = (searchScope == .all ? allApplications : applications)
+            .first(where: { $0.bundleIdentifier == selectedApplicationID }) else {
             return nil
         }
-        return ApplicationDetail(entry, groupName: selectedGroup?.name)
+        return ApplicationDetail(entry, groupName: groupName(ofApplication: entry.bundleIdentifier)
+            ?? selectedGroup?.name)
     }
 
     /// 删除确认框要说的那句话。
@@ -338,7 +368,8 @@ public final class ConsoleModel {
     private func isListed(_ bundleIdentifier: String) -> Bool {
         switch selection {
         case .missing: missing.contains { $0.bundleIdentifier == bundleIdentifier }
-        case .group: applications.contains { $0.bundleIdentifier == bundleIdentifier }
+        case .group: (searchScope == .all ? allApplications : applications)
+            .contains { $0.bundleIdentifier == bundleIdentifier }
         case nil: false
         }
     }

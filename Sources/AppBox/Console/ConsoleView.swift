@@ -178,6 +178,13 @@ struct ConsoleView: View {
                 .foregroundStyle(.secondary)
             Text(group.name).font(.headline)
             Spacer(minLength: 12)
+            Picker("搜索范围", selection: $model.searchScope) {
+                Text("本组").tag(SearchScope.group)
+                Text("全部").tag(SearchScope.all)
+            }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+            .fixedSize()
             searchField
             if model.isLoading {
                 ProgressView().controlSize(.small)
@@ -188,13 +195,13 @@ struct ConsoleView: View {
         .background(.bar)
     }
 
-    /// 组内即时过滤：输入即筛，命中规则与覆盖层搜索同一套（含拼音）。
+    /// 组内/全组即时过滤：输入即筛，命中规则与覆盖层搜索同一套（含拼音）。
     private var searchField: some View {
         HStack(spacing: 6) {
             Image(systemName: "magnifyingglass")
                 .font(.system(size: 12))
                 .foregroundStyle(.secondary)
-            TextField("搜索本组", text: $model.query)
+            TextField(model.searchScope == .all ? "搜索全部应用" : "搜索本组", text: $model.query)
                 .textFieldStyle(.plain)
                 .font(.callout)
                 .frame(width: 160)
@@ -312,10 +319,18 @@ struct ConsoleView: View {
         ConsoleApplicationTile(
             entry: entry,
             side: Self.tileSize,
-            isSelected: model.selectedApplicationID == entry.bundleIdentifier
+            isSelected: model.selectedApplicationID == entry.bundleIdentifier,
+            groupName: shownGroupName(for: entry)
         ) {
             model.selectedApplicationID = entry.bundleIdentifier
         }
+    }
+
+    /// 全组搜索时给外来应用标一下归属；本来就属于当前分组的不标，不制造噪音。
+    private func shownGroupName(for entry: ApplicationEntry) -> String? {
+        guard model.searchScope == .all else { return nil }
+        let name = model.groupName(ofApplication: entry.bundleIdentifier)
+        return name == nil || name == model.selectedGroup?.name ? nil : name
     }
 
     /// 状态行：计数与隐藏数在过滤时同时说「命中几 / 共几」，不误报总数。
@@ -338,11 +353,14 @@ struct ConsoleView: View {
         let hidden = model.applications.filter(\.isHidden).count
         let total = model.applications.count
         let shown = model.filteredApplications.count
+        let allTotal = model.allApplications.count
+        let searching = !model.query.trimmingCharacters(in: .whitespaces).isEmpty
         let base: String
-        if model.query.trimmingCharacters(in: .whitespaces).isEmpty {
-            base = "\(total) 个应用"
-        } else {
-            base = "命中 \(shown) / 共 \(total)"
+        switch (model.searchScope, searching) {
+        case (.group, false): base = "\(total) 个应用"
+        case (.group, true): base = "命中 \(shown) / 共 \(total)"
+        case (.all, false): base = "全部 \(allTotal) 个应用"
+        case (.all, true): base = "全部命中 \(shown) / 共 \(allTotal)"
         }
         return hidden == 0 ? base : "\(base)（\(hidden) 个已隐藏）"
     }
@@ -421,6 +439,8 @@ private struct ConsoleApplicationTile: View {
     let entry: ApplicationEntry
     let side: CGFloat
     let isSelected: Bool
+    /// 全组搜索时标的归属分组；nil 表示不需要标。
+    var groupName: String? = nil
     let onSelect: () -> Void
 
     @State private var isHovering = false
@@ -432,6 +452,13 @@ private struct ConsoleApplicationTile: View {
                 .font(.caption)
                 .lineLimit(1)
                 .frame(width: side + 16)
+            if let groupName {
+                Text(groupName)
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+                    .lineLimit(1)
+                    .frame(width: side + 16)
+            }
         }
         .opacity(entry.isHidden ? 0.55 : 1)
         .accessibilityElement(children: .ignore)

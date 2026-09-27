@@ -5,8 +5,13 @@ import Testing
 
 @Suite("搜索：匹配")
 struct AppSearchMatchTests {
-    private func app(_ id: String = "com.example.app", name: String, alias: String? = nil) -> ApplicationEntry {
-        TestEntries.make(id, name: name, alias: alias)
+    private func app(
+        _ id: String = "com.example.app",
+        name: String,
+        alias: String? = nil,
+        localized: String? = nil
+    ) -> ApplicationEntry {
+        TestEntries.make(id, name: name, alias: alias, localized: localized)
     }
 
     @Test("中文名：精确与前缀都算，只出现在中间不算")
@@ -27,6 +32,15 @@ struct AppSearchMatchTests {
         #expect(AppSearch.matches(query: "jsq", entry: app(name: "计算器")))
         #expect(AppSearch.matches(query: "jisuanqi", entry: app(name: "计算器")))
         #expect(!AppSearch.matches(query: "jsr", entry: app(name: "计算器")))
+    }
+
+    @Test("英文显示名 + 中文本地化名：WeChat 也能被 wx、weix 找到")
+    func localizedChineseNameParticipatesInPinyin() {
+        let wechat = app("com.tencent.xinWeChat", name: "WeChat", localized: "微信")
+        for query in ["wx", "weix", "weixin", "微信"] {
+            #expect(AppSearch.matches(query: query, entry: wechat), "「\(query)」该匹配 localizedName 微信")
+        }
+        #expect(!AppSearch.matches(query: "ws", entry: wechat))
     }
 
     @Test("英文名：大小写不敏感，整词前缀与缩写都算")

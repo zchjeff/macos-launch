@@ -67,10 +67,12 @@ public struct AppScanner: Sendable {
         let bundleIdentifier = (info?["CFBundleIdentifier"] as? String)
             .flatMap { $0.isEmpty ? nil : $0 }
             ?? bundle.path
+        let name = displayName(from: info, bundle: bundle)
 
         return AppRecord(
             bundleIdentifier: bundleIdentifier,
-            displayName: displayName(from: info, bundle: bundle),
+            displayName: name,
+            localizedName: localizedChineseName(in: bundle, differingFrom: name),
             path: bundle.path,
             category: info?["LSApplicationCategoryType"] as? String,
             directory: directory
@@ -98,6 +100,32 @@ public struct AppScanner: Sendable {
             }
         }
         return bundle.deletingPathExtension().lastPathComponent
+    }
+
+    /// bundle 的中文本地化显示名：`Contents/Resources/zh*.lproj/InfoPlist.strings` 里的
+    /// `CFBundleDisplayName`/`CFBundleName`。没有中文包、解析失败、或与显示名相同时返回 nil——
+    /// 这个字段只为拼音搜索多留一个落点，画面上不出现第二个名字。
+    private func localizedChineseName(in bundle: URL, differingFrom name: String) -> String? {
+        let resources = bundle.appendingPathComponent("Contents/Resources", isDirectory: true)
+        let localizations = (try? FileManager.default.contentsOfDirectory(atPath: resources.path)) ?? []
+        let keys = ["zh-Hans.lproj", "zh-Hant.lproj"]
+            + localizations
+                .filter { $0.hasPrefix("zh") && $0.hasSuffix(".lproj") }
+                .sorted()
+        for folder in keys {
+            let url = resources.appendingPathComponent(folder)
+                .appendingPathComponent("InfoPlist.strings")
+            guard
+                let data = try? Data(contentsOf: url),
+                let strings = try? PropertyListSerialization.propertyList(from: data, format: nil)
+                    as? [String: Any]
+            else { continue }
+            for key in ["CFBundleDisplayName", "CFBundleName"] {
+                guard let value = strings[key] as? String, !value.isEmpty, value != name else { continue }
+                return value
+            }
+        }
+        return nil
     }
 
     private func isDirectory(_ url: URL) -> Bool {

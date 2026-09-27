@@ -69,6 +69,18 @@ final class AppTree {
         return bundle
     }
 
+    /// 往应用包里写一份本地化 `InfoPlist.strings`（模拟 `zh-Hans.lproj` 里的中文名）。
+    @discardableResult
+    func localizedStrings(_ entries: [String: Any], folder: String = "zh-Hans.lproj", in bundle: URL) throws -> URL {
+        let resources = bundle.appendingPathComponent("Contents/Resources", isDirectory: true)
+        let lproj = resources.appendingPathComponent(folder, isDirectory: true)
+        try FileManager.default.createDirectory(at: lproj, withIntermediateDirectories: true)
+        let url = lproj.appendingPathComponent("InfoPlist.strings")
+        let data = try PropertyListSerialization.data(fromPropertyList: entries, format: .xml, options: 0)
+        try data.write(to: url)
+        return url
+    }
+
     /// 造一个扫描根，模拟 `/Applications`、`/System/Applications` 这类并列目录。
     func makeRoot(_ name: String, _ directory: ApplicationDirectory) throws -> ScanRoot {
         let url = root.appendingPathComponent(name, isDirectory: true)

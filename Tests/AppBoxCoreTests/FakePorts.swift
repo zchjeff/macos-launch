@@ -155,12 +155,14 @@ enum TestEntries {
         name: String,
         category: String? = nil,
         alias: String? = nil,
+        localized: String? = nil,
         isHidden: Bool = false
     ) -> ApplicationEntry {
         ApplicationEntry(
             bundleIdentifier: bundleIdentifier,
             realName: name,
             alias: alias,
+            localizedName: localized,
             path: "/Applications/\(name).app",
             category: category,
             iconCachePath: nil,

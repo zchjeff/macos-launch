@@ -9,6 +9,8 @@ public struct ApplicationEntry: Sendable, Equatable, Identifiable {
     /// 真实名称。别名生效时界面仍要能说清「这究竟是哪个应用」。
     public let realName: String
     public let alias: String?
+    /// 中文本地化显示名，只参与搜索匹配、不参与显示（见 `AppRecord.localizedName`）。
+    public let localizedName: String?
     public let path: String
     public let category: String?
     public let iconCachePath: String?
@@ -24,6 +26,7 @@ public struct ApplicationEntry: Sendable, Equatable, Identifiable {
         bundleIdentifier: String,
         realName: String,
         alias: String?,
+        localizedName: String? = nil,
         path: String,
         category: String?,
         iconCachePath: String?,
@@ -33,6 +36,7 @@ public struct ApplicationEntry: Sendable, Equatable, Identifiable {
         self.bundleIdentifier = bundleIdentifier
         self.realName = realName
         self.alias = alias
+        self.localizedName = localizedName
         self.path = path
         self.category = category
         self.iconCachePath = iconCachePath

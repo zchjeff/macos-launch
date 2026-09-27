@@ -741,6 +741,73 @@ struct ConsoleSearchFilterTests {
 }
 
 @MainActor
+@Suite("控制台：全组搜索")
+struct ConsoleSearchAllGroupsTests {
+    private func modelWithGroups() async throws -> ConsoleModel {
+        let fixture = try ServiceFixture(records: [
+            TestRecords.make("com.example.wechat", name: "微信"),
+            TestRecords.make("com.example.xcode", name: "Xcode"),
+            TestRecords.make("com.example.xmind", name: "XMind"),
+            TestRecords.make("com.example.garageband", name: "库乐队"),
+        ])
+        let model = ConsoleModel(service: fixture.service)
+        await model.refresh()
+        await model.createGroup(named: "开发")
+        let dev = try #require(model.selectedGroupID)
+        await model.move("com.example.xcode", toGroup: dev)
+        await model.move("com.example.garageband", toGroup: dev)
+        // 当前选中的是「开发」（Xcode、库乐队）；微信、XMind 在未分类。
+        return model
+    }
+
+    @Test("全部范围横穿所有分组命中：wx 在「开发」页也能搜到微信")
+    func allScopeCrossesGroups() async throws {
+        let model = try await modelWithGroups()
+        model.query = "wx"
+        #expect(model.searchScope == .group)
+        #expect(model.filteredApplications.isEmpty)
+
+        model.searchScope = .all
+
+        #expect(model.filteredApplications.map(\.bundleIdentifier) == ["com.example.wechat"])
+    }
+
+    @Test("全部范围的顺序是分组顺序、组内顺序；空查询给出全部应用")
+    func allScopeOrdersByGroupThenApplication() async throws {
+        let model = try await modelWithGroups()
+        model.searchScope = .all
+
+        #expect(model.allApplications.map(\.bundleIdentifier) == [
+            "com.example.wechat", "com.example.xmind",
+            "com.example.garageband", "com.example.xcode",
+        ])
+        #expect(model.filteredApplications.map(\.bundleIdentifier) == model.allApplications.map(\.bundleIdentifier))
+    }
+
+    @Test("全组结果里选中应用：详情说的是它真正所在的分组")
+    func detailNamesTheOwningGroup() async throws {
+        let model = try await modelWithGroups()
+        model.searchScope = .all
+        model.query = "wx"
+        model.selectedApplicationID = "com.example.wechat"
+
+        #expect(model.detail?.groupName == "未分类")
+    }
+
+    @Test("从全部切回本组：不在当前分组的应用不再占着详情面板")
+    func switchingBackClearsForeignSelection() async throws {
+        let model = try await modelWithGroups()
+        model.searchScope = .all
+        model.selectedApplicationID = "com.example.wechat"
+        #expect(model.detail != nil)
+
+        model.searchScope = .group
+
+        #expect(model.detail == nil)
+    }
+}
+
+@MainActor
 @Suite("控制台：开机启动开关")
 struct ConsoleLoginItemTests {
     @Test("开关的初值来自端口：系统里已注册就显示为开")

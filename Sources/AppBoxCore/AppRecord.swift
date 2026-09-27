@@ -45,6 +45,9 @@ public struct ScanRoot: Sendable, Equatable {
 public struct AppRecord: Sendable, Equatable, Identifiable {
     public let bundleIdentifier: String
     public let displayName: String
+    /// 中文本地化显示名（bundle 的 `zh*.lproj` 里写的那个）。
+    /// 系统语言不是中文时 `displayName` 会是英文名，这条字段让拼音搜索仍然认得「微信」。
+    public let localizedName: String?
     /// 最近已知路径。应用被移动或删除后这里会过时，由后续切片负责标记「失效」。
     public let path: String
     /// `LSApplicationCategoryType` 原样保留，分类建议在后续切片里解释它。
@@ -58,6 +61,7 @@ public struct AppRecord: Sendable, Equatable, Identifiable {
     public init(
         bundleIdentifier: String,
         displayName: String,
+        localizedName: String? = nil,
         path: String,
         category: String?,
         directory: ApplicationDirectory,
@@ -65,6 +69,7 @@ public struct AppRecord: Sendable, Equatable, Identifiable {
     ) {
         self.bundleIdentifier = bundleIdentifier
         self.displayName = displayName
+        self.localizedName = localizedName
         self.path = path
         self.category = category
         self.directory = directory
