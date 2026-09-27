@@ -52,6 +52,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         installMainMenu()
+        // 幽灵投递守卫的信号源：拖拽起手的按下代数。应用级装一次，全窗口生效。
+        MousePressCounter.shared.install()
 
         if !overlay.installHotKey() {
             NSLog("[AppBox] ⌥+Space 注册失败，可能已被其他应用占用")
@@ -59,6 +61,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // 先把快照算出来，免得第一次按键落在冷扫描上。
         overlay.prewarm()
         startDirectorySync()
+
+        // TEMP（012 真机验证用，验证完删除）：`--show-overlay` 直接唤起覆盖层。
+        // computer-use 合成不了系统级热键（⌥+Space 走不到 Carbon），验证拖拽得先有窗口。
+        if CommandLine.arguments.contains("--show-overlay") {
+            Task { @MainActor [overlay] in
+                try? await Task.sleep(for: .seconds(2))
+                overlay.show()
+            }
+        }
 
         // 首启进引导整理。之后启动只静默常驻——配置文件在，向导就不再出现。
         if service.loadOutcome.isFirstLaunch {

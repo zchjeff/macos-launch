@@ -35,6 +35,21 @@ echo "==> 组装 bundle"
 rm -rf "$APP"
 mkdir -p "$CONTENTS/MacOS" "$CONTENTS/Resources"
 cp "$BIN" "$CONTENTS/MacOS/$APP_NAME"
+if [[ -f "$ROOT/Resources/$APP_NAME.icns" ]]; then
+  cp "$ROOT/Resources/$APP_NAME.icns" "$CONTENTS/Resources/$APP_NAME.icns"
+fi
+
+echo "==> 修正 SDK 版本标记"
+# SwiftPM 链接时把部署目标（14.0）当成 SDK 版本写进了 LC_BUILD_VERSION 的 sdk 字段。
+# 这个字段不只用于兼容性诊断：SwiftUI 靠它判断「按哪个 SDK 链接过」来选手势实现，
+# 被认成旧 SDK 时 Button 上的 .draggable 起不了拖拽会话（真机验证：只改这一个字段，
+# 同一份二进制就能在「拖不起来」和「拖得起来」之间来回切换）。
+# sdk 修正为真实 SDK 版本；minos 保持 SwiftPM 写好的部署目标不动。
+EXEC="$CONTENTS/MacOS/$APP_NAME"
+MINOS="$(otool -l "$EXEC" | awk '/LC_BUILD_VERSION/{seen=1; next} seen && /minos/{print $2; exit}')"
+xcrun vtool -set-build-version macos "$MINOS" "$(xcrun --show-sdk-version)" -replace \
+  -output "$EXEC.stamped" "$EXEC"
+mv "$EXEC.stamped" "$EXEC"
 
 echo "==> 生成 Info.plist"
 # 刻意不设置 LSUIElement：AppBox 是常规应用，保留 Dock 图标作为控制台入口。
@@ -53,6 +68,8 @@ cat >"$CONTENTS/Info.plist" <<PLIST
 	<string>6.0</string>
 	<key>CFBundleName</key>
 	<string>$APP_NAME</string>
+	<key>CFBundleIconFile</key>
+	<string>$APP_NAME</string>
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>
@@ -70,6 +87,18 @@ cat >"$CONTENTS/Info.plist" <<PLIST
 			<string>com.ethicall.appbox.application</string>
 			<key>UTTypeDescription</key>
 			<string>AppBox 应用引用</string>
+			<key>UTTypeConformsTo</key>
+			<array>
+				<string>public.data</string>
+			</array>
+			<key>UTTypeTagSpecification</key>
+			<dict/>
+		</dict>
+		<dict>
+			<key>UTTypeIdentifier</key>
+			<string>com.ethicall.appbox.group</string>
+			<key>UTTypeDescription</key>
+			<string>AppBox 分组引用</string>
 			<key>UTTypeConformsTo</key>
 			<array>
 				<string>public.data</string>

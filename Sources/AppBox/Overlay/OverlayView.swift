@@ -10,8 +10,15 @@ struct OverlayView: View {
     let model: OverlayModel
     let onLaunch: (ApplicationEntry) -> Void
     let onDismiss: () -> Void
+    /// 一次拖拽落地：哪一层、拖的是什么、容器坐标里的落点、那一层的格子位置。
+    /// 视图只管把这几样说清楚；判定与落盘都在控制器那边，与控制台走同一套领域动作。
+    let onDrop: (OverlayModel.Level, OverlayDragItem, Point, [Int: Rect]) -> Bool
 
     @FocusState private var searchFocused: Bool
+    /// 顶层格子的位置与当前被瞄准的格子。子网格那两份是它自己的（见 `GroupGridView`）——
+    /// 两层可能同时开着，落点状态也必须是两份。
+    @State private var topFrames: [Int: Rect] = [:]
+    @State private var topDropTarget: Int?
 
     var body: some View {
         ZStack {
@@ -23,7 +30,13 @@ struct OverlayView: View {
 
             if case .group(let id) = model.level,
                let group = snapshot.groups.first(where: { $0.group.id == id }) {
-                GroupGridView(group: group, model: model, onLaunch: onLaunch, onTapBlank: tapBlank)
+                GroupGridView(
+                    group: group,
+                    model: model,
+                    onLaunch: onLaunch,
+                    onTapBlank: tapBlank,
+                    onDrop: { item, point, frames in onDrop(.group(id), item, point, frames) }
+                )
             }
 
             if model.isSearching {
@@ -44,8 +57,9 @@ struct OverlayView: View {
         // `updateSearch` 是幂等的，两边同时触发不会把状态搅乱。
         .onChange(of: model.query) { _, _ in model.updateSearch(in: snapshot) }
         // 控制器说该有焦点了（唤起时、或焦点不在输入框却敲了字）。
-        .onChange(of: model.focusRequest) { _, _ in searchFocused = true }
-        .onAppear { searchFocused = true }
+        // TEMP（012 Esc 定位实验，测完恢复）：停掉自动聚焦，看拖拽中 Esc 能不能恢复取消。
+        // .onChange(of: model.focusRequest) { _, _ in searchFocused = true }
+        // .onAppear { searchFocused = true }
     }
 
     private var background: some View {
@@ -85,17 +99,51 @@ struct OverlayView: View {
             ScrollView {
                 LazyVGrid(columns: overlayColumns, spacing: 28) {
                     ForEach(Array(tiles.enumerated()), id: \.element.id) { index, tile in
-                        TileView(
+                        DroppableTile(
                             tile: tile,
+                            index: index,
                             isHighlighted: model.level == .top && !model.isSearching
                                 && index == model.selection,
+                            isDropTargeted: topDropTarget == index,
+                            space: OverlayDropSpaces.top,
                             onLaunch: onLaunch,
-                            onOpenFolder: { model.open(groupID: $0) }
+                            onOpenFolder: { model.open(groupID: $0) },
+                            onDropApplication: { bundleIdentifier, location, index in
+                                guard let point = containerPoint(
+                                    location: location, tileIndex: index, frames: topFrames
+                                ) else { return false }
+                                return onDrop(
+                                    .top,
+                                    .application(bundleIdentifier: bundleIdentifier),
+                                    point,
+                                    topFrames
+                                )
+                            },
+                            onTargetedChange: { targeted in
+                                topDropTarget = dropTargetUpdate(
+                                    current: topDropTarget, targeted: targeted, index: index
+                                )
+                            }
                         )
                     }
                 }
                 .padding(.horizontal, 60)
                 .padding(.vertical, 72)
+            }
+            // 格子位置与落点必须是同一套数字：量法（`.named`）与落点（dropDestination）
+            // 都以这一层为原点。
+            .coordinateSpace(name: OverlayDropSpaces.top)
+            .onPreferenceChange(TileFramesKey.self) { topFrames = $0 }
+            // 拖分组方块进顶层：落在哪个格子边上就在哪儿插队。
+            // 这一层只登记方块载荷——应用落在顶层空白是拒绝（未分类已经在顶层了），
+            // 连登记都不登记：系统直接不给这个手势，比先接住再拒绝诚实。
+            .guardedDropDestination(for: GroupDragPayload.self) { payload, location in
+                onDrop(
+                    .top,
+                    .folder(groupID: payload.groupID),
+                    Point(x: location.x, y: location.y),
+                    topFrames
+                )
             }
             // 高亮换了行才需要把它带进画面（左右挪动不换行，视图就不动）。
             // 子网格或搜索盖着的时候顶层网格不该跟着动——那会儿高亮走的是另一份。
@@ -159,6 +207,7 @@ private struct SearchResultsView: View {
                                 TileView(
                                     tile: tile,
                                     isHighlighted: index == model.selection,
+                                    isDropTargeted: false,
                                     onLaunch: onLaunch,
                                     onOpenFolder: { _ in }
                                 )
@@ -197,6 +246,13 @@ private struct GroupGridView: View {
     let model: OverlayModel
     let onLaunch: (ApplicationEntry) -> Void
     let onTapBlank: () -> Void
+    /// 这一层上的一次拖拽落地（容器坐标 + 这一层的格子位置）。
+    let onDrop: (OverlayDragItem, Point, [Int: Rect]) -> Bool
+
+    /// 这一层的格子位置与被瞄准的格子。跟着视图一起生灭：退了子网格就作废，
+    /// 下一层（或另一个分组）不会拿到上一层的数字。
+    @State private var frames: [Int: Rect] = [:]
+    @State private var dropTarget: Int?
 
     var body: some View {
         let tiles = group.visibleApplications.map(OverlayTile.application)
@@ -218,11 +274,29 @@ private struct GroupGridView: View {
                         ScrollView {
                             LazyVGrid(columns: overlayColumns, spacing: 28) {
                                 ForEach(Array(tiles.enumerated()), id: \.element.id) { index, tile in
-                                    TileView(
+                                    DroppableTile(
                                         tile: tile,
+                                        index: index,
                                         isHighlighted: !model.isSearching && index == model.selection,
+                                        isDropTargeted: dropTarget == index,
+                                        space: OverlayDropSpaces.group,
                                         onLaunch: onLaunch,
-                                        onOpenFolder: { _ in }
+                                        onOpenFolder: { _ in },
+                                        onDropApplication: { bundleIdentifier, location, index in
+                                            guard let point = containerPoint(
+                                                location: location, tileIndex: index, frames: frames
+                                            ) else { return false }
+                                            return onDrop(
+                                                .application(bundleIdentifier: bundleIdentifier),
+                                                point,
+                                                frames
+                                            )
+                                        },
+                                        onTargetedChange: { targeted in
+                                            dropTarget = dropTargetUpdate(
+                                                current: dropTarget, targeted: targeted, index: index
+                                            )
+                                        }
                                     )
                                 }
                             }
@@ -238,6 +312,18 @@ private struct GroupGridView: View {
                 }
             }
             .padding(.top, 64)
+        }
+        // 格子位置与落点都以这一层为原点，贴着两个网格一起量、一起收。
+        .coordinateSpace(name: OverlayDropSpaces.group)
+        .onPreferenceChange(TileFramesKey.self) { frames = $0 }
+        // 子网格的空白接住的是应用：落在这儿 = 放回「未分类」。
+        // 分组方块这一层不登记——方块只从顶层拖出、也只在顶层落地。
+        .guardedDropDestination(for: ApplicationDragPayload.self) { payload, location in
+            onDrop(
+                .application(bundleIdentifier: payload.bundleIdentifier),
+                Point(x: location.x, y: location.y),
+                frames
+            )
         }
         .transition(.scale(scale: 0.96).combined(with: .opacity))
     }
@@ -257,18 +343,29 @@ private struct GroupGridView: View {
 }
 
 /// 一个格子：单图标与方块共用同一副外壳，免得两处的高亮样子长歪。
-private struct TileView: View {
+struct TileView: View {
     let tile: OverlayTile
     let isHighlighted: Bool
+    /// 正被拖拽瞄准：「松手就落在这儿」。给的是和键盘高亮同一圈环——
+    /// 两者不会同时出现（拖拽时没人按键盘），共用一个环不会撞车。
+    let isDropTargeted: Bool
     let onLaunch: (ApplicationEntry) -> Void
     let onOpenFolder: (String) -> Void
 
     var body: some View {
         switch tile {
         case .application(let entry):
-            ApplicationTile(entry: entry, isHighlighted: isHighlighted) { onLaunch(entry) }
+            ApplicationTile(
+                entry: entry,
+                isHighlighted: isHighlighted,
+                isDropTargeted: isDropTargeted
+            ) { onLaunch(entry) }
         case .folder(let folder):
-            FolderTileView(tile: folder, isHighlighted: isHighlighted) { onOpenFolder(folder.id) }
+            FolderTileView(
+                tile: folder,
+                isHighlighted: isHighlighted,
+                isDropTargeted: isDropTargeted
+            ) { onOpenFolder(folder.id) }
         }
     }
 }
@@ -309,6 +406,7 @@ private struct TileSurface<Content: View>: View {
 private struct ApplicationTile: View {
     let entry: ApplicationEntry
     let isHighlighted: Bool
+    let isDropTargeted: Bool
     let action: () -> Void
 
     @State private var isHovering = false
@@ -316,7 +414,10 @@ private struct ApplicationTile: View {
     var body: some View {
         Button(action: action) {
             VStack(spacing: 8) {
-                TileSurface(isActive: isHovering || isHighlighted, isHighlighted: isHighlighted) {
+                TileSurface(
+                    isActive: isHovering || isHighlighted || isDropTargeted,
+                    isHighlighted: isHighlighted || isDropTargeted
+                ) {
                     IconImage(entry: entry)
                         .frame(width: 96, height: 96)
                 }
@@ -335,6 +436,7 @@ private struct ApplicationTile: View {
 private struct FolderTileView: View {
     let tile: FolderTile
     let isHighlighted: Bool
+    let isDropTargeted: Bool
     let action: () -> Void
 
     @State private var isHovering = false
@@ -342,7 +444,10 @@ private struct FolderTileView: View {
     var body: some View {
         Button(action: action) {
             VStack(spacing: 8) {
-                TileSurface(isActive: isHovering || isHighlighted, isHighlighted: isHighlighted) {
+                TileSurface(
+                    isActive: isHovering || isHighlighted || isDropTargeted,
+                    isHighlighted: isHighlighted || isDropTargeted
+                ) {
                     thumbnails
                 }
                 Text(tile.name)

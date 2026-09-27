@@ -93,8 +93,7 @@ struct ConsoleView: View {
                             .disabled(snapshot.group.isUngrouped)
                         }
                         // 从右侧把应用拖到这一行上就移入该组。
-                        .dropDestination(for: ApplicationDragPayload.self) { payloads, _ in
-                            guard let payload = payloads.first else { return false }
+                        .guardedDropDestination(for: ApplicationDragPayload.self) { payload, _ in
                             Task { await model.move(payload.bundleIdentifier, toGroup: snapshot.group.id) }
                             return true
                         }
@@ -213,11 +212,10 @@ struct ConsoleView: View {
     /// 隐藏的行照样能拖——隐藏只是不在覆盖层露面，用户照样可以把它挪个地方。
     @ViewBuilder
     private func row(for entry: ApplicationEntry) -> some View {
-        let content = ApplicationRow(entry: entry, height: Self.rowHeight)
+        draggableRow(for: entry)
             // 从右侧把应用拖到左侧的分组上就移入该组；
             // 拖到另一行上则插到它的前面或后面。
-            .dropDestination(for: ApplicationDragPayload.self) { payloads, location in
-                guard let payload = payloads.first else { return false }
+            .guardedDropDestination(for: ApplicationDragPayload.self) { payload, location in
                 let placeAfter = location.y > Self.rowHeight / 2
                 Task {
                     await model.move(
@@ -228,11 +226,18 @@ struct ConsoleView: View {
                 }
                 return true
             }
+    }
+
+    /// 拖拽源接线。收在落点里层：反过来会让系统级 Esc 取消被吞掉
+    /// （同覆盖层格子，真机探针定位）。
+    @ViewBuilder
+    private func draggableRow(for entry: ApplicationEntry) -> some View {
+        let row = ApplicationRow(entry: entry, height: Self.rowHeight)
 
         if entry.isLocked {
-            content
+            row
         } else {
-            content.draggable(ApplicationDragPayload(bundleIdentifier: entry.bundleIdentifier))
+            row.draggable(ApplicationDragPayload(bundleIdentifier: entry.bundleIdentifier))
         }
     }
 

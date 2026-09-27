@@ -175,8 +175,55 @@ final class OverlayController {
             snapshot: snapshot,
             model: model,
             onLaunch: { [weak self] entry in self?.activate(entry) },
-            onDismiss: { [weak self] in self?.hide() }
+            onDismiss: { [weak self] in self?.hide() },
+            onDrop: { [weak self] level, item, point, frames in
+                self?.performDrop(item, at: point, on: level, frames: frames) ?? false
+            }
         )
+    }
+
+    /// 一次拖拽落地：判定、落盘、重扫。
+    ///
+    /// 覆盖层这条路上唯一写盘的地方。判定是纯函数（`OverlayDrop.action`），
+    /// 执行走的还是控制台那几个服务方法——两个界面不可能给同一份配置算出不同结果。
+    private func performDrop(
+        _ item: OverlayDragItem,
+        at point: Point,
+        on level: OverlayModel.Level,
+        frames: [Int: Rect]
+    ) -> Bool {
+        // 归属先对一遍：被盖住那一层的接收面还挂着（顶层的滚动区在子网格后面没拆），
+        // 名字对不上就拒绝，免得子网格里的一次松手动到了顶层的顺序。
+        // 搜索盖着时也不接——那会儿摆的是结果清单，不是这一层的网格。
+        guard !model.isSearching, level == model.level, let snapshot = latestSnapshot else {
+            return false
+        }
+
+        // TEMP（012 真机验证用，验证完删除）：确认落点回调到底有没有来。
+        NSLog("[AppBox] TEMP drop: \(item) level=\(level) point=\(point)")
+        let action = OverlayDrop.action(
+            for: item,
+            at: point,
+            on: level,
+            tiles: model.tiles(in: snapshot),
+            frames: frames,
+            in: snapshot
+        )
+        NSLog("[AppBox] TEMP action: \(action)")
+        guard action != .rejected else { return false }
+
+        do {
+            try service.perform(action)
+        } catch {
+            // 服务那边的拒绝（分组没了、成员被锁了）不做成弹窗：这次拖拽的
+            // 返回值会把「没接住」的动画还给用户，日志留个底就够了。
+            NSLog("[AppBox] 拖拽整理失败：\(error.localizedDescription)")
+            return false
+        }
+        // 立刻重扫：文件里的顺序就是下一次画的顺序，中间不留一份「看起来动了、
+        // 其实没动」的缓冲。扫描在后台线程跑，这一帧的空窗用户感觉不到。
+        refresh()
+        return true
     }
 
     private func makeWindow(for screen: NSScreen) -> OverlayWindow {
@@ -187,8 +234,11 @@ final class OverlayController {
             defer: false
         )
 
-        // Dock 是 20、菜单栏是 24、状态栏是 25；screenSaver（1000）足够盖过它们。
-        window.level = .screenSaver
+        // Dock 是 20、菜单栏是 24、状态栏是 25，比它们高就够了。
+        // 不能到 screenSaver（1000）：拖拽会话的拖影窗口固定在 dragging 层（500，
+        // 实测值），源窗口一旦高过它，拖拽起得了手却永远收不了尾——事件交给
+        // 会话内的嵌套循环后就再没人推进它（006/012 真机验证抓到的坑）。
+        window.level = NSWindow.Level(rawValue: Int(CGWindowLevelForKey(.draggingWindow)) - 1)
         // 必须能加入所有 Space 并覆盖全屏应用，否则在别的桌面或全屏应用前台时唤不出来。
         window.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary]
         window.isOpaque = false
@@ -253,6 +303,8 @@ final class OverlayController {
         isTypingInSearchField: Bool
     ) -> Bool {
         if keyCode == UInt16(kVK_Escape) {
+            // TEMP（012 真机验证用，验证完删除）：确认拖拽中按 Esc 时监听器收没收到。
+            NSLog("[AppBox] TEMP Esc: isSearching=\(model.isSearching) level=\(model.level)")
             // 搜索中 Esc 先清查询（回到来时的层级），子网格里先回顶层，顶层才收起。
             if model.isSearching {
                 model.clearSearch()

@@ -36,6 +36,7 @@ public struct Rect: Equatable, Sendable {
     public var maxX: Double { origin.x + size.width }
     public var minY: Double { origin.y }
     public var maxY: Double { origin.y + size.height }
+    public var midX: Double { origin.x + size.width / 2 }
 
     /// 使用半开区间 `[minX, maxX) × [minY, maxY)`。
     ///
