@@ -394,6 +394,63 @@ struct QRCodeWorkspaceTests {
         #expect(renderer.lastOptions?.scale == 3)
         #expect(renderer.lastOptions?.quietZone == 1)
     }
+
+    @Test("美化样式随 options 透传给渲染器")
+    func passesStyleThrough() {
+        let renderer = FakeRenderer()
+        var subject = QRCodeWorkspace()
+        subject.input = "hi"
+        subject.options = QRCodeOptions(style: QRCodeStyle(shape: .circle, logoData: Data("logo".utf8)))
+        subject.compute(renderer: renderer)
+        #expect(renderer.lastOptions?.style.shape == .circle)
+        #expect(renderer.lastOptions?.style.logoData != nil)
+    }
+}
+
+@Suite("工具箱：二维码美化样式")
+struct QRCodeStyleTests {
+    @Test("默认样式是纯标准态：黑白方块、无 Logo")
+    func defaultIsPlain() {
+        let style = QRCodeStyle.default
+        #expect(style.isPlain)
+        #expect(style.shape == .square)
+        #expect(style.foreground == .black)
+        #expect(style.background == .white)
+        #expect(style.logoData == nil)
+    }
+
+    @Test("任一美化项偏离标准就不再是纯样式，渲染层要走慢路")
+    func anyDeviationMakesItStyled() {
+        #expect(!QRCodeStyle(shape: .rounded).isPlain)
+        #expect(!QRCodeStyle(foreground: QRColor(rgb: 0xFF0000)).isPlain)
+        #expect(!QRCodeStyle(background: QRColor(rgb: 0x00FF00)).isPlain)
+        #expect(!QRCodeStyle(logoData: Data("x".utf8)).isPlain)
+    }
+
+    @Test("Logo 比例被夹进安全范围")
+    func clampsLogoScale() {
+        #expect(QRCodeStyle(logoScale: 0.01).normalized.logoScale == 0.05)
+        #expect(QRCodeStyle(logoScale: 0.9).normalized.logoScale == 0.3)
+        #expect(QRCodeStyle(logoScale: 0.2).normalized.logoScale == 0.2)
+    }
+
+    @Test("颜色分量被夹进 0...1，十六进制可往返")
+    func normalizesColorComponents() {
+        let clamped = QRColor(red: 2, green: -1, blue: 0.5)
+        #expect(clamped.red == 1)
+        #expect(clamped.green == 0)
+        #expect(clamped.blue == 0.5)
+        #expect(QRColor(rgb: 0x336699).rgbValue == 0x336699)
+    }
+
+    @Test("样式 token 随任一影响结果的参数变化；与标准态不同")
+    func tokenChangesWithStyledParams() {
+        let base = QRCodeStyle.default.fingerprintToken
+        #expect(QRCodeStyle(shape: .circle).fingerprintToken != base)
+        #expect(QRCodeStyle(foreground: QRColor(rgb: 0xFF0000)).fingerprintToken != base)
+        #expect(QRCodeStyle(logoData: Data("a".utf8)).fingerprintToken != base)
+        #expect(QRCodeStyle(logoScale: 0.25).fingerprintToken != base)
+    }
 }
 
 @Suite("工具箱：过期结果识别")
@@ -426,6 +483,14 @@ struct ToolboxFingerprintTests {
         #expect(qr("a", options: QRCodeOptions(correctionLevel: .low))
                 != qr("a", options: QRCodeOptions(correctionLevel: .high)))
         #expect(qr("a", options: QRCodeOptions(scale: 5)) != qr("a", options: QRCodeOptions(scale: 10)))
+    }
+
+    @Test("美化样式变了，二维码指纹也跟着变（否则换 Logo 不重算）")
+    func changesWithQRCodeStyle() {
+        #expect(qr("a", options: QRCodeOptions(style: .default))
+                != qr("a", options: QRCodeOptions(style: QRCodeStyle(shape: .rounded))))
+        #expect(qr("a", options: QRCodeOptions(style: QRCodeStyle(logoData: Data("x".utf8))))
+                != qr("a", options: QRCodeOptions(style: .default)))
     }
 
     @Test("工具之间不串味：改二维码参数不该让 JSON 重算")

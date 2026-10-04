@@ -241,6 +241,8 @@ struct QRCodeToolView: View {
                                 .strokeBorder(.separator, lineWidth: 0.5)
                         }
                     optionsBar
+                    Divider()
+                    styleBar
                 }
             }
         } output: {
@@ -281,6 +283,132 @@ struct QRCodeToolView: View {
             }
             .controlSize(.small)
         }
+    }
+
+    /// 美化样式控制区：模块形状、前景/背景色、中心 Logo。
+    ///
+    /// 换形状或叠 Logo 会吃掉模块边界，扫码成功率下降——所以这些控件默认就是
+    /// 最稳的标准样式（方块、黑白、无 Logo），用户主动改才生效。
+    private var styleBar: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 10) {
+                Picker("形状", selection: shapeBinding) {
+                    ForEach(QRModuleShape.allCases, id: \.self) { shape in
+                        Text(shape.displayName).tag(shape)
+                    }
+                }
+                .pickerStyle(.segmented)
+                .labelsHidden()
+                .fixedSize()
+
+                ColorPicker("码点", selection: foregroundBinding, supportsOpacity: false)
+                    .labelsHidden()
+                ColorPicker("背景", selection: backgroundBinding, supportsOpacity: false)
+                    .labelsHidden()
+            }
+
+            HStack(spacing: 10) {
+                Button {
+                    pickLogo()
+                } label: {
+                    Label(model.qrCode.options.style.logoData == nil ? "Logo…" : "更换 Logo",
+                          systemImage: "photo.badge.plus")
+                }
+                .controlSize(.small)
+
+                if model.qrCode.options.style.logoData != nil {
+                    Stepper(value: logoScaleBinding, in: 0.1...0.3, step: 0.01) {
+                        Text("Logo \(Int((model.qrCode.options.style.logoScale * 100).rounded()))%")
+                            .font(.caption)
+                    }
+                    .controlSize(.small)
+
+                    Button("移除", action: removeLogo)
+                        .controlSize(.small)
+                        .buttonStyle(.link)
+                } else {
+                    Text("在二维码中心叠一张 Logo")
+                        .font(.caption)
+                        .foregroundStyle(.tertiary)
+                }
+
+                Spacer()
+
+                // 只在偏离标准样式时才给「重置」，标准态下这个按钮没意义。
+                if model.qrCode.options.style != .default {
+                    Button("恢复默认样式", action: resetStyle)
+                        .controlSize(.small)
+                        .buttonStyle(.link)
+                }
+            }
+        }
+    }
+
+    private var shapeBinding: Binding<QRModuleShape> {
+        Binding(
+            get: { model.qrCode.options.style.shape },
+            set: { shape in
+                var style = model.qrCode.options.style
+                style.shape = shape
+                model.setQRCodeStyle(style)
+            }
+        )
+    }
+
+    private var foregroundBinding: Binding<Color> {
+        Binding(
+            get: { Color(nsColor: NSColor(model.qrCode.options.style.foreground)) },
+            set: { color in
+                var style = model.qrCode.options.style
+                style.foreground = QRColor(color)
+                model.setQRCodeStyle(style)
+            }
+        )
+    }
+
+    private var backgroundBinding: Binding<Color> {
+        Binding(
+            get: { Color(nsColor: NSColor(model.qrCode.options.style.background)) },
+            set: { color in
+                var style = model.qrCode.options.style
+                style.background = QRColor(color)
+                model.setQRCodeStyle(style)
+            }
+        )
+    }
+
+    private var logoScaleBinding: Binding<Double> {
+        Binding(
+            get: { model.qrCode.options.style.logoScale },
+            set: { scale in
+                var style = model.qrCode.options.style
+                style.logoScale = scale
+                model.setQRCodeStyle(style)
+            }
+        )
+    }
+
+    /// 选一张本地图作为中心 Logo。读不成图像就静默忽略（不给错，用户重选即可）。
+    private func pickLogo() {
+        let panel = NSOpenPanel()
+        panel.allowedContentTypes = [.png, .jpeg, .tiff, .gif, .heic]
+        panel.allowsMultipleSelection = false
+        panel.canChooseDirectories = false
+        guard panel.runModal() == .OK, let url = panel.url,
+              let data = try? Data(contentsOf: url) else { return }
+        var style = model.qrCode.options.style
+        style.logoData = data
+        model.setQRCodeStyle(style)
+    }
+
+    private func removeLogo() {
+        var style = model.qrCode.options.style
+        style.logoData = nil
+        model.setQRCodeStyle(style)
+    }
+
+    private func resetStyle() {
+        model.setQRCodeStyle(.default)
     }
 
     private var levelBinding: Binding<QRCodeOptions.CorrectionLevel> {
@@ -411,5 +539,36 @@ extension ToolIdentifier {
         case .passwordGenerator: "key"
         case .placeholderText: "text.alignleft"
         }
+    }
+}
+
+// MARK: - QRColor 与系统颜色的桥接
+
+/// `QRColor` 是 `AppBoxCore` 里的纯分量参数；只有在这一层（AppBox）才把它翻译成
+/// 系统颜色。两个方向都在这里，界面无需自己拆分量。
+extension NSColor {
+    convenience init(_ color: QRColor) {
+        self.init(
+            red: CGFloat(color.red),
+            green: CGFloat(color.green),
+            blue: CGFloat(color.blue),
+            alpha: CGFloat(color.alpha)
+        )
+    }
+}
+
+extension QRColor {
+    /// 从 SwiftUI `Color` 构造。先落到 sRGB 再取分量：ColorPicker 给的颜色
+    /// 可能在扩展色域里，不先转换空间 `redComponent` 会直接崩溃。
+    /// 取不出分量（非 RGB 色）时退化为黑。
+    init(_ color: Color) {
+        let ns = NSColor(color).usingColorSpace(.sRGB)
+        guard let ns else { self = .black; return }
+        self.init(
+            red: Double(ns.redComponent),
+            green: Double(ns.greenComponent),
+            blue: Double(ns.blueComponent),
+            alpha: Double(ns.alphaComponent)
+        )
     }
 }

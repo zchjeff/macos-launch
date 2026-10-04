@@ -28,15 +28,19 @@ public struct QRCodeOptions: Hashable, Sendable {
     /// 四周静区宽度，单位是模块。规范要求至少 4。
     public var quietZone: Int
     public var correctionLevel: CorrectionLevel
+    /// 美化样式：颜色、模块形状、中心 Logo。默认黑白方块，与增强前一致。
+    public var style: QRCodeStyle
 
     public init(
         correctionLevel: CorrectionLevel = .medium,
         scale: Int = 10,
-        quietZone: Int = 4
+        quietZone: Int = 4,
+        style: QRCodeStyle = .default
     ) {
         self.correctionLevel = correctionLevel
         self.scale = scale
         self.quietZone = quietZone
+        self.style = style
     }
 
     /// 收进合法范围。界面上的步进器可能给出 0 或负数，这里兜住。
@@ -44,8 +48,12 @@ public struct QRCodeOptions: Hashable, Sendable {
         var copy = self
         copy.scale = min(max(scale, 1), 64)
         copy.quietZone = min(max(quietZone, 0), 16)
+        copy.style = style.normalized
         return copy
     }
+
+    /// 是否维持纯标准样式（黑白方块、无 Logo），供渲染层决定走不走快路。
+    public var isPlainStyle: Bool { style.isPlain }
 }
 
 /// 把文本变成二维码字节流时能出的问题。

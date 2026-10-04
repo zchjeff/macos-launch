@@ -81,6 +81,16 @@ public final class ToolboxModel {
         recompute(.qrCode)
     }
 
+    /// 换用一套美化样式（颜色 / 形状 / Logo）。
+    ///
+    /// 与 `setQRCodeOptions` 分开只为让视图意图更直白：改的是样式而不是编码参数。
+    /// 两者最终都落到 `qrCode.options` 上，同样触发立即重算（样式改动没有连续性，不必防抖）。
+    public func setQRCodeStyle(_ style: QRCodeStyle) {
+        var options = qrCode.options
+        options.style = style
+        setQRCodeOptions(options)
+    }
+
     /// 重算某个工具。
     ///
     /// - Parameter debounce: 是否为「用户还在敲字」的连续输入。

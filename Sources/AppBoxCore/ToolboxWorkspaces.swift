@@ -22,7 +22,9 @@ public enum ToolboxFingerprint {
         case .jsonFormatter:
             "json|\(indent)|\(isCompact)|\(input.hashValue)"
         case .qrCode:
-            "qr|\(options)|\(input.hashValue)"
+            // 不用 `\(options)` 的默认反射描述：那会把整段 Logo PNG 字节拼进字符串，
+            // 既臃肿又拖慢比较。用 style 的轻量 token 单独承担美化参数的变化。
+            "qr|\(options.correctionLevel)|\(options.scale)|\(options.quietZone)|\(options.style.fingerprintToken)|\(input.hashValue)"
         default:
             "\(tool.rawValue)|"
         }
