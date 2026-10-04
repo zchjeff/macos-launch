@@ -1,15 +1,6 @@
 import Foundation
 import Observation
 
-/// 控制台左侧选中的东西：某个分组，或者「失效应用」那一栏。
-///
-/// 用枚举而不是一个约定的字符串 id：失效列表不是分组，硬塞进分组列表就得靠
-/// 「某个特殊的 id」来区分，那种东西迟早会被当成普通分组处理。
-public enum ConsoleSelection: Hashable, Sendable {
-    case group(String)
-    case missing
-}
-
 /// 控制台搜索的范围：只搜当前分组，还是跨所有分组。
 public enum SearchScope: Hashable, Sendable {
     case group
@@ -60,6 +51,11 @@ public final class ConsoleModel {
             }
         }
     }
+    /// 设置面板是否正在显示。
+    ///
+    /// 两个入口共用这一个状态：窗口工具栏右上角的齿轮与 App 菜单里的「设置…」（⌘,）。
+    /// 如果各存各的，用户用菜单打开、用齿轮关掉（或反过来）就会各说各话。
+    public var isShowingSettings = false
     /// 待确认的删除。界面据此弹确认框——**确认之前一个字节都不写**。
     public var pendingDeletion: GroupSnapshot?
     /// 待确认的清理。
@@ -357,21 +353,22 @@ public final class ConsoleModel {
     }
 
     private func isAvailable(_ selection: ConsoleSelection?, in snapshot: LibrarySnapshot) -> Bool {
-        switch selection {
-        case .group(let id): snapshot.groups.contains { $0.group.id == id }
-        case .missing: !snapshot.missing.isEmpty
-        case nil: false
-        }
+        ConsoleSelectionValidity.isAvailable(
+            selection,
+            groupIDs: Set(snapshot.groups.map(\.group.id)),
+            hasMissing: !snapshot.missing.isEmpty
+        )
     }
 
     /// 某个应用在当前这一栏里还找得到吗。
     private func isListed(_ bundleIdentifier: String) -> Bool {
-        switch selection {
-        case .missing: missing.contains { $0.bundleIdentifier == bundleIdentifier }
-        case .group: (searchScope == .all ? allApplications : applications)
-            .contains { $0.bundleIdentifier == bundleIdentifier }
-        case nil: false
-        }
+        let visible = searchScope == .all ? allApplications : applications
+        return ConsoleSelectionValidity.isListed(
+            bundleIdentifier,
+            selection: selection,
+            missingIdentifiers: Set(missing.map(\.bundleIdentifier)),
+            visibleIdentifiers: Set(visible.map(\.bundleIdentifier))
+        )
     }
 
     private func groupName(ofGroup id: String) -> String? {

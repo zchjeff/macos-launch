@@ -87,6 +87,8 @@ struct DroppableTile: View {
     let isHighlighted: Bool
     let isDropTargeted: Bool
     let space: String
+    /// 玻璃形变的命名空间：分组方块展开时要把自己的玻璃交棒给子网格标题。
+    var namespace: Namespace.ID? = nil
     let onLaunch: (ApplicationEntry) -> Void
     let onOpenFolder: (String) -> Void
     /// 应用落地：载荷里的 bundleID、格子里量到的落点、自己的下标。
@@ -114,7 +116,8 @@ struct DroppableTile: View {
             isHighlighted: isHighlighted,
             isDropTargeted: isDropTargeted,
             onLaunch: onLaunch,
-            onOpenFolder: onOpenFolder
+            onOpenFolder: onOpenFolder,
+            namespace: namespace
         )
         .trackTileFrame(index: index, space: space)
 

@@ -12,12 +12,11 @@ struct SetupWizardView: View {
     @State private var renaming: SetupSuggestion?
 
     var body: some View {
-        VStack(spacing: 0) {
-            header
-            Divider()
+        // 向导的上下两条控制条做成玻璃，建议列表从它们底下滚过去。
+        GlassGroup(spacing: 12) {
             content
-            Divider()
-            footer
+                .safeAreaInset(edge: .top, spacing: 0) { header }
+                .safeAreaInset(edge: .bottom, spacing: 0) { footer }
         }
         .frame(width: 720, height: 580)
         // 向导是个得先做决定的地方：关掉它不会替你写配置，但也别留下半截状态。
@@ -45,6 +44,11 @@ struct SetupWizardView: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(16)
+        // 说明文字浮在建议列表之上：玻璃，但保持文字本身是 .primary / .secondary。
+        .glassSurface(.floating, in: .rect(cornerRadius: 16), fallback: .bar)
+        .padding(.horizontal, 12)
+        .padding(.top, 12)
+        .padding(.bottom, 6)
     }
 
     @ViewBuilder
@@ -71,6 +75,8 @@ struct SetupWizardView: View {
                 }
             }
             .listStyle(.inset)
+            // 列表滚到上下两条玻璃底下时，边缘柔化（macOS 26+）。
+            .glassScrollEdge([.top, .bottom])
         }
     }
 
@@ -95,7 +101,8 @@ struct SetupWizardView: View {
                 if !model.unrecognizedCategories.isEmpty {
                     Text(unrecognizedHint)
                         .font(.caption)
-                        .foregroundStyle(.tertiary)
+                        // 玻璃底上抬到 .secondary。
+                        .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }
@@ -105,16 +112,22 @@ struct SetupWizardView: View {
                     if await model.cancel() { onFinish() }
                 }
             }
+            .glassActionButton()
             Button("确认整理") {
                 Task {
                     if await model.confirm() { onFinish() }
                 }
             }
             .keyboardShortcut(.defaultAction)
+            // 整个向导的主操作：系统突出玻璃（旧系统回退成 borderedProminent）。
+            .glassActionButton(prominent: true)
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 12)
-        .background(.bar)
+        .glassSurface(.floating, in: .rect(cornerRadius: 16), fallback: .bar)
+        .padding(.horizontal, 12)
+        .padding(.top, 6)
+        .padding(.bottom, 12)
     }
 
     private var summary: String {
@@ -248,8 +261,10 @@ private struct SetupRenameSheet: View {
             HStack {
                 Spacer()
                 Button("取消", role: .cancel) { dismiss() }
+                    .glassActionButton()
                 Button("确定", action: commit)
                     .keyboardShortcut(.defaultAction)
+                    .glassActionButton(prominent: true)
             }
         }
         .padding(20)

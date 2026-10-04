@@ -10,16 +10,11 @@ struct MissingApplicationsView: View {
     private static let rowHeight: CGFloat = 44
 
     var body: some View {
-        VStack(spacing: 0) {
-            header
-            Divider()
-            if model.missing.isEmpty {
-                emptyHint
-            } else {
-                list
-            }
-            Divider()
-            footer
+        // 与分组详情同一套：上下两条玻璃控制条浮着，列表从它们底下滚过去。
+        GlassGroup(spacing: 12) {
+            content
+                .safeAreaInset(edge: .top, spacing: 0) { header }
+                .safeAreaInset(edge: .bottom, spacing: 0) { footer }
         }
         .confirmationDialog(
             "清理失效记录",
@@ -32,6 +27,15 @@ struct MissingApplicationsView: View {
             Button("取消", role: .cancel) { model.cancelForget() }
         } message: { _ in
             Text(model.forgetConfirmationMessage ?? "")
+        }
+    }
+
+    @ViewBuilder
+    private var content: some View {
+        if model.missing.isEmpty {
+            emptyHint
+        } else {
+            list
         }
     }
 
@@ -50,7 +54,11 @@ struct MissingApplicationsView: View {
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 10)
-        .background(.bar)
+        // 顶栏玻璃：列表从它底下滚过去。
+        .glassSurface(.floating, in: .rect(cornerRadius: 16), fallback: .bar)
+        .padding(.horizontal, 12)
+        .padding(.top, 10)
+        .padding(.bottom, 6)
     }
 
     private var emptyHint: some View {
@@ -74,16 +82,22 @@ struct MissingApplicationsView: View {
                 Button("清理…", role: .destructive) { model.requestForget(record.bundleIdentifier) }
             }
         }
+        // 列表滚到上下两条玻璃底下时，边缘柔化（macOS 26+）。
+        .glassScrollEdge([.top, .bottom])
     }
 
     private var footer: some View {
         Text("这些应用在配置里，但磁盘上已经找不到。清理只是让 AppBox 忘掉它的设置，不会删除任何东西。")
             .font(.caption)
-            .foregroundStyle(.tertiary)
+            // 玻璃底上抬到 .secondary，保持可读。
+            .foregroundStyle(.secondary)
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.horizontal, 16)
             .padding(.vertical, 8)
-            .background(.bar)
+            .glassSurface(.floating, in: .rect(cornerRadius: 16), fallback: .bar)
+            .padding(.horizontal, 12)
+            .padding(.top, 6)
+            .padding(.bottom, 10)
     }
 
     private var forgetConfirmation: Binding<Bool> {

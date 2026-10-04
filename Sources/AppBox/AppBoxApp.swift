@@ -110,6 +110,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         false
     }
 
+    /// 菜单里的「设置…」（⌘,）。
+    ///
+    /// 设置面板挂在控制台上，所以这里先把控制台叫出来。窗口没开时也走这条路：
+    /// 否则用户按 ⌘, 会什么反应都没有。
+    @objc private func openConsoleSettings(_ sender: Any?) {
+        overlay.hideWithoutRestoringFocus()
+        console.showSettings()
+    }
+
     /// 程序自己的主菜单。
     ///
     /// 没有它就没有 ⌘Q；更要紧的是文本框里的 ⌘C/⌘V 也不会响应——
@@ -123,6 +132,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             action: #selector(NSApplication.orderFrontStandardAboutPanel(_:)),
             keyEquivalent: ""
         )
+        appMenu.addItem(.separator())
+        // 设置走 macOS 的惯例入口（⌘,）：它与窗口工具栏右上角的齿轮打到同一个状态，
+        // 因此无论从哪儿打开、从哪儿关掉，都只有一份「设置面板开着吗」的答案。
+        let settingsItem = NSMenuItem(
+            title: "设置…",
+            action: #selector(AppDelegate.openConsoleSettings(_:)),
+            keyEquivalent: ","
+        )
+        settingsItem.target = self
+        appMenu.addItem(settingsItem)
         appMenu.addItem(.separator())
         appMenu.addItem(withTitle: "隐藏 \(name)", action: #selector(NSApplication.hide(_:)), keyEquivalent: "h")
         appMenu.addItem(.separator())

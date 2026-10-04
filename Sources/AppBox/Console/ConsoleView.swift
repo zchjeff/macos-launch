@@ -7,8 +7,18 @@ import SwiftUI
 /// 失败了说什么——都在模型里，那部分有单元测试兜着。
 struct ConsoleView: View {
     @Bindable var model: ConsoleModel
+    /// 工具箱的状态。与 `ConsoleModel` 平级、由窗口控制器持有，
+    /// 因此关掉控制台再打开，用户粘在工具里的内容还在（只有退出进程才忘）。
+    var toolbox: ToolboxModel
 
     @State private var nameEntry: NameEntry?
+
+    /// 侧栏分区的展开状态。
+    ///
+    /// 存在 `UserDefaults` 里而不是方案 JSON 里：折叠是「用户想怎么摆自己这一栏」，
+    /// 与覆盖层读到的任何东西都无关，塞进配置只会让配置文件多一份与它无关的噪音。
+    @AppStorage("console.sidebar.groupsExpanded") private var groupsExpanded = true
+    @AppStorage("console.sidebar.toolsExpanded") private var toolsExpanded = true
 
     /// 瓦片的边长（图标容器，不含名字）。
     ///
@@ -19,8 +29,12 @@ struct ConsoleView: View {
 
     var body: some View {
         NavigationSplitView {
-            sidebar
-                .navigationSplitViewColumnWidth(min: 190, ideal: 220, max: 320)
+            // 侧栏的玻璃收在同一个容器里：间距统一，
+            // 相邻的玻璃按钮与条形玻璃会各自成形，而不是糊成一块。
+            GlassGroup(spacing: 12) {
+                sidebar
+            }
+            .navigationSplitViewColumnWidth(min: 190, ideal: 220, max: 320)
                 .confirmationDialog(
                     "删除分组",
                     isPresented: deleteConfirmation,
@@ -36,6 +50,18 @@ struct ConsoleView: View {
         } detail: {
             detail
         }
+        .toolbar {
+            // 设置入口固定在右上角。用 `primaryAction` 让它落进工具区右侧，
+            // 不会被系统挪到标题旁边（那是 `navigation` 的位置）。
+            ToolbarItem(placement: .primaryAction) {
+                Button {
+                    model.isShowingSettings = true
+                } label: {
+                    Label("设置", systemImage: "gearshape")
+                }
+                .help("设置（⌘,）")
+            }
+        }
         .inspector(isPresented: isShowingDetail) {
             if let detail = model.detail {
                 ApplicationInspector(
@@ -45,6 +71,9 @@ struct ConsoleView: View {
                 )
                 .inspectorColumnWidth(min: 240, ideal: 280, max: 380)
             }
+        }
+        .sheet(isPresented: $model.isShowingSettings) {
+            ConsoleSettingsView(model: model)
         }
         .sheet(item: $nameEntry) { entry in
             NameEntrySheet(entry: entry) { name in
@@ -78,12 +107,27 @@ struct ConsoleView: View {
 
     private var sidebar: some View {
         List(selection: $model.selection) {
-            Section("分组") {
+            // 「分组」整区可折叠：分组多了以后，用户往往只在分组与工具之间来回切，
+            // 收起一区能把另一区顶到眼前。
+            //
+            // 分区标题的可见性跟着 `expanded` 走：系统默认只在「悬停且展开」时显示标题，
+            // 收起后标题会消失，用户就找不到地方点回去了——所以这里显式指定。
+            //
+            // 分区头不可选中：`Section` 带上 `selection:` 之后自己也成了一行，
+            // 点标题会把左栏的选中项清空，右侧跟着闪一下空白。
+            //
+            // ⚠️ `.selectionDisabled()` 必须只作用在「分区头视图」上，不能挂在 `Section` 上：
+            // 挂在 Section 上会连分区里的每一行一起禁用选中，导致整栏点不动（历史 bug）。
+            Section(isExpanded: $groupsExpanded) {
                 ForEach(model.groups) { snapshot in
                     GroupRow(snapshot: snapshot)
                         .tag(ConsoleSelection.group(snapshot.group.id))
                         .contentShape(Rectangle())
                         .contextMenu {
+                            // 新分组从这一行右键长出来：它要放进「分组」这件事里，
+                            // 而这一行正是那件事本身。
+                            Button("新建分组…") { nameEntry = .create }
+                            Divider()
                             Button("重命名…") { nameEntry = .rename(snapshot.group) }
                                 .disabled(snapshot.group.isUngrouped)
                             Divider()
@@ -101,53 +145,44 @@ struct ConsoleView: View {
                 .onMove { source, destination in
                     Task { await model.moveGroups(fromOffsets: source, toOffset: destination) }
                 }
+            } header: {
+                SidebarSectionHeader(title: "分组")
+                    .selectionDisabled()
             }
 
             // 只有真的有失效记录时才出现：平时它是噪音，出问题时它得一眼看得见。
             if !model.missing.isEmpty {
-                Section("维护") {
+                Section {
                     MissingGroupRow(count: model.missing.count)
                         .tag(ConsoleSelection.missing)
                         .contentShape(Rectangle())
+                } header: {
+                    Text("维护")
+                        .selectionDisabled()
                 }
             }
-        }
-        .safeAreaInset(edge: .bottom) { addGroupBar }
-    }
 
-    private var addGroupBar: some View {
-        HStack {
-            Button {
-                nameEntry = .create
-            } label: {
-                Label("新建分组", systemImage: "plus")
+            // 工具箱。与分组并列但互不相干：工具不读应用、不写配置（见 ADR-0007）。
+            Section(isExpanded: $toolsExpanded) {
+                ForEach(ToolIdentifier.allCases) { tool in
+                    ToolRow(tool: tool)
+                        .tag(ConsoleSelection.tool(tool))
+                        .contentShape(Rectangle())
+                }
+            } header: {
+                SidebarSectionHeader(title: "工具")
+                    .selectionDisabled()
             }
-            .buttonStyle(.borderless)
-            Spacer()
-            Toggle("开机启动", isOn: openAtLoginBinding)
-                .toggleStyle(.switch)
-                .controlSize(.small)
-                .font(.caption)
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 8)
-        .background(.bar)
-    }
-
-    /// 开关读的是模型缓存的系统状态；拨动后模型会按端口回填真值，
-    /// 注册失败时开关弹回、同时弹错误说明。
-    private var openAtLoginBinding: Binding<Bool> {
-        Binding(
-            get: { model.isOpenAtLogin },
-            set: { model.setOpenAtLogin($0) }
-        )
     }
 
     // MARK: - 右侧
 
     @ViewBuilder
     private var detail: some View {
-        if case .missing = model.selection {
+        if case .tool(let tool) = model.selection {
+            ToolDetailView(tool: tool, model: toolbox)
+        } else if case .missing = model.selection {
             MissingApplicationsView(model: model)
         } else if let group = model.selectedGroup {
             groupDetail(for: group)
@@ -158,17 +193,24 @@ struct ConsoleView: View {
     }
 
     private func groupDetail(for group: AppBoxCore.Group) -> some View {
-        VStack(spacing: 0) {
-            detailHeader(for: group)
-            if model.applications.isEmpty {
-                emptyGroupHint(for: group)
-            } else if model.filteredApplications.isEmpty {
-                noMatchHint
-            } else {
-                applicationGrid
-            }
-            Divider()
-            detailFooter
+        // 上下两条控制条改成玻璃之后，网格要真的从它们底下滚过去：
+        // 玻璃背后有内容才有折射与层次，否则只是两块灰板。
+        // `safeAreaInset` 让内容铺满整块区域、条子浮在上面——功能与原来一致。
+        GlassGroup(spacing: 12) {
+            groupContent(for: group)
+                .safeAreaInset(edge: .top, spacing: 0) { detailHeader(for: group) }
+                .safeAreaInset(edge: .bottom, spacing: 0) { detailFooter }
+        }
+    }
+
+    @ViewBuilder
+    private func groupContent(for group: AppBoxCore.Group) -> some View {
+        if model.applications.isEmpty {
+            emptyGroupHint(for: group)
+        } else if model.filteredApplications.isEmpty {
+            noMatchHint
+        } else {
+            applicationGrid
         }
     }
 
@@ -192,7 +234,11 @@ struct ConsoleView: View {
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 10)
-        .background(.bar)
+        // 详情区顶栏：玻璃浮在网格之上，网格从它底下滚过去（见 groupDetail）。
+        .glassSurface(.floating, in: .rect(cornerRadius: 16), fallback: .bar)
+        .padding(.horizontal, 12)
+        .padding(.top, 10)
+        .padding(.bottom, 6)
     }
 
     /// 组内/全组即时过滤：输入即筛，命中规则与覆盖层搜索同一套（含拼音）。
@@ -211,18 +257,21 @@ struct ConsoleView: View {
                 } label: {
                     Image(systemName: "xmark.circle.fill")
                         .font(.system(size: 12))
-                        .foregroundStyle(.tertiary)
+                        .foregroundStyle(.secondary)
                 }
-                .buttonStyle(.plain)
+                // 已在玻璃输入框上，不再铺玻璃；给一点按压反馈就够。
+                .buttonStyle(GlassPressButtonStyle(scale: 0.9))
             }
         }
         .padding(.horizontal, 8)
         .padding(.vertical, 5)
-        .background(RoundedRectangle(cornerRadius: 6, style: .continuous).fill(.background))
-        .overlay(
-            RoundedRectangle(cornerRadius: 6, style: .continuous)
-                .strokeBorder(.separator, lineWidth: 1)
-        )
+        // 这里刻意不铺玻璃：它整个嵌在玻璃顶栏里，两层玻璃会融成一块，
+        // 输入框就没有边界了。给它一口「井」——浅底 + 细描边，功能一眼可辨。
+        .background(.background.opacity(0.55), in: .rect(cornerRadius: 8))
+        .overlay {
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .strokeBorder(.separator, lineWidth: 0.5)
+        }
     }
 
     private var noMatchHint: some View {
@@ -266,6 +315,8 @@ struct ConsoleView: View {
             .padding(24)
             .frame(maxWidth: .infinity)
         }
+        // 网格滚到上下两条玻璃底下时，边缘柔化而不是硬切（macOS 26+）。
+        .glassScrollEdge([.top, .bottom])
     }
 
     /// 一个瓦片：选中、拖拽源、落点接在这里。
@@ -336,17 +387,22 @@ struct ConsoleView: View {
     /// 状态行：计数与隐藏数在过滤时同时说「命中几 / 共几」，不误报总数。
     private var detailFooter: some View {
         HStack(spacing: 8) {
+            // 压在玻璃状态条上的字各抬一级：三级 / 四级灰在玻璃上没有余量。
             Text(countSummary)
                 .font(.caption)
-                .foregroundStyle(.tertiary)
+                .foregroundStyle(.secondary)
             Spacer()
             Text("拖动调整顺序；拖到左侧分组则移入。")
                 .font(.caption)
-                .foregroundStyle(.quaternary)
+                .foregroundStyle(.tertiary)
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 8)
-        .background(.bar)
+        // 底部状态条与顶栏同一套：玻璃浮在网格之上，网格从底下滚过。
+        .glassSurface(.floating, in: .rect(cornerRadius: 16), fallback: .bar)
+        .padding(.horizontal, 12)
+        .padding(.top, 6)
+        .padding(.bottom, 10)
     }
 
     private var countSummary: String {
@@ -415,8 +471,19 @@ private struct GroupRow: View {
     }
 }
 
-private struct MissingGroupRow: View {
-    let count: Int
+/// 侧栏分区标题。
+///
+/// 折叠状态下用户点标题会展开或收起，因此标题区域本身不能是按钮
+/// （按钮会吃掉点击、把「点标题折叠」这件事抢走）。
+private struct SidebarSectionHeader: View {
+    let title: String
+
+    var body: some View {
+        Text(title)
+    }
+}
+
+private struct MissingGroupRow: View {    let count: Int
 
     var body: some View {
         HStack(spacing: 8) {
@@ -436,6 +503,8 @@ private struct MissingGroupRow: View {
 /// 外观与覆盖层的格子同语言（圆角容器、悬停加亮、强调色环），
 /// 尺寸收敛一档：控制台是管理，覆盖层是启动。
 private struct ConsoleApplicationTile: View {
+    /// 「减弱动态效果」：瓦片不做浮起过渡。
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     let entry: ApplicationEntry
     let side: CGFloat
     let isSelected: Bool
@@ -467,35 +536,49 @@ private struct ConsoleApplicationTile: View {
     }
 
     private var iconContainer: some View {
-        ZStack {
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .fill(.background.opacity(isHovering || isSelected ? 0.9 : 0.55))
-                .overlay {
-                    Image(nsImage: iconImage)
-                        .resizable()
-                        .interpolation(.high)
-                        .frame(width: side * 2 / 3, height: side * 2 / 3)
+        iconPlate
+            // 底板单独放在背景层里切换：图标本身不参与条件分支，
+            // 悬停时不会整个重新淡入。
+            .background { plate }
+            .overlay {
+                badges
+            }
+            .frame(width: side, height: side)
+            .shadow(
+                color: .black.opacity(isHovering ? 0.18 : 0.08),
+                radius: isHovering ? 6 : 2,
+                y: isHovering ? 3 : 1
+            )
+            .overlay {
+                if isSelected {
+                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                        .strokeBorder(Color.accentColor, lineWidth: 2)
                 }
-                .overlay {
-                    badges
-                }
-                .frame(width: side, height: side)
-                .shadow(
-                    color: .black.opacity(isHovering ? 0.18 : 0.08),
-                    radius: isHovering ? 6 : 2,
-                    y: isHovering ? 3 : 1
-                )
-                .overlay {
-                    if isSelected {
-                        RoundedRectangle(cornerRadius: 12, style: .continuous)
-                            .strokeBorder(Color.accentColor, lineWidth: 2)
-                    }
-                }
+            }
+            .scaleEffect(isHovering ? 1.03 : 1)
+            .animation(reduceMotion ? nil : GlassMotion.quick, value: isHovering)
+            .onHover { isHovering = $0 }
+            .onTapGesture(perform: onSelect)
+    }
+
+    /// 瓦片的底板。与覆盖层同一套规矩：静止的瓦片只是一层浅色托底，
+    /// 指针进来或选中才浮起玻璃。一屏几十个瓦片人人一块玻璃，只会糊成一片。
+    @ViewBuilder
+    private var plate: some View {
+        let shape = RoundedRectangle(cornerRadius: 12, style: .continuous)
+        if isHovering || isSelected {
+            Color.clear.glassSurface(.interactive, in: shape, fallback: .regularMaterial)
+        } else {
+            shape.fill(.background.opacity(0.55))
         }
-        .scaleEffect(isHovering ? 1.03 : 1)
-        .animation(.easeOut(duration: 0.15), value: isHovering)
-        .onHover { isHovering = $0 }
-        .onTapGesture(perform: onSelect)
+    }
+
+    private var iconPlate: some View {
+        Image(nsImage: iconImage)
+            .resizable()
+            .interpolation(.high)
+            .frame(width: side * 2 / 3, height: side * 2 / 3)
+            .frame(width: side, height: side)
     }
 
     private var iconImage: NSImage {
@@ -601,8 +684,11 @@ private struct NameEntrySheet: View {
             HStack {
                 Spacer()
                 Button("取消", role: .cancel) { dismiss() }
+                    .glassActionButton()
                 Button("确定", action: commit)
                     .keyboardShortcut(.defaultAction)
+                    // 主操作给系统突出玻璃，副操作给普通玻璃（旧系统回退成 bordered）。
+                    .glassActionButton(prominent: true)
             }
         }
         .padding(20)

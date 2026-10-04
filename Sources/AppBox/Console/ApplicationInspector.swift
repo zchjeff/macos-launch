@@ -11,6 +11,9 @@ struct ApplicationInspector: View {
     let onEditAlias: () -> Void
 
     var body: some View {
+        // 检查器本身已经是系统的浮层材质（`.inspector` 提供的玻璃底板），
+        // 在它上面再铺一层玻璃就成了玻璃叠玻璃——那正是要避免的浑浊。
+        // 这里只把「操作」玻璃化：按钮是浮在面板上的，玻璃用得其所。
         ScrollView {
             VStack(alignment: .leading, spacing: 18) {
                 header
@@ -139,12 +142,12 @@ struct ApplicationInspector: View {
                     .textSelection(.enabled)
                 Spacer(minLength: 0)
                 Button(detail.alias == nil ? "设置…" : "修改…", action: onEditAlias)
-                    .buttonStyle(.borderless)
+                    .glassActionButton(borderlessFallback: true)
                 if detail.alias != nil {
                     Button("清除") {
                         Task { await model.setAlias(nil, for: detail.bundleIdentifier) }
                     }
-                    .buttonStyle(.borderless)
+                    .glassActionButton(borderlessFallback: true)
                 }
             }
         }

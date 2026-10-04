@@ -9,10 +9,15 @@ import SwiftUI
 @MainActor
 final class ConsoleWindowController {
     private let model: ConsoleModel
+    /// 工具的状态挂在这里而不是视图上：控制台窗口关掉只是 `orderOut`，
+    /// 这个控制器还在，所以工具的输入能一直留到退出进程。
+    private let toolbox: ToolboxModel
     private var window: NSWindow?
 
     init(service: LibraryService) {
         model = ConsoleModel(service: service, loginItem: SMAppServiceLoginItemController())
+        // 二维码出图要用 CoreImage，实现在这一层注入（`AppBoxCore` 不依赖系统框架）。
+        toolbox = ToolboxModel(qrRenderer: CoreImageQRCodeRenderer())
     }
 
     /// 每次打开都重读一遍分组结构：控制台关着的时候，覆盖层那边可能已经拖过了。
@@ -25,6 +30,12 @@ final class ConsoleWindowController {
     func showSetup() {
         present()
         Task { await model.beginSetup() }
+    }
+
+    /// 打开控制台并亮出设置面板（菜单 ⌘, 走这条路）。
+    func showSettings() {
+        present()
+        model.isShowingSettings = true
     }
 
     /// 目录变更后送进来的新快照。
@@ -55,7 +66,7 @@ final class ConsoleWindowController {
         // 控制器一直持有这个窗口，关掉只是 orderOut；不关掉这个开关，
         // AppKit 会在 close 时把窗口释放掉，再打开就是访问已释放对象。
         window.isReleasedWhenClosed = false
-        window.contentView = NSHostingView(rootView: ConsoleView(model: model))
+        window.contentView = NSHostingView(rootView: ConsoleView(model: model, toolbox: toolbox))
         window.center()
         // 记住用户摆的位置和调的大小，下次打开还在那儿。
         window.setFrameAutosaveName("AppBoxConsole")

@@ -1,0 +1,3 @@
+module AppBoxCore {
+    header "/Users/zhangchanghong/workspace/ethicall/mac-app-box/.build-native/arm64-apple-macosx/debug/AppBoxCore.build/include/AppBoxCore-Swift.h"
+}
