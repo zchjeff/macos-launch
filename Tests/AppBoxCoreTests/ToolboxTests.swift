@@ -514,7 +514,137 @@ struct ToolIdentifierTests {
     @Test("已实现的工具与未实现的分得清")
     func marksImplementedTools() {
         // 侧栏据此把未实现的置灰。没实现的不该假装能用。
-        #expect(ToolIdentifier.allCases.filter(\.isImplemented) == [.jsonFormatter, .qrCode])
+        #expect(ToolIdentifier.allCases.filter(\.isImplemented) == [.jsonFormatter, .qrCode, .passwordGenerator])
+    }
+}
+
+@Suite("工具箱：随机密码")
+struct PasswordGeneratorTests {
+    // MARK: - 字符池组装
+
+    @Test("默认参数：长度 16，大小写与数字开、符号关")
+    func defaultsAreSensible() {
+        let options = PasswordOptions()
+        #expect(options.length == 16)
+        #expect(options.includesLowercase && options.includesUppercase && options.includesDigits)
+        #expect(!options.includesSymbols)
+        #expect(!options.excludesAmbiguous)
+    }
+
+    @Test("字符池只包含启用字符集的字")
+    func poolContainsOnlyEnabledSets() {
+        let onlyDigits = PasswordGenerator.pool(options: PasswordOptions(
+            includesLowercase: false, includesUppercase: false, includesDigits: true, includesSymbols: false
+        ))
+        #expect(Set(onlyDigits) == Set("0123456789"))
+
+        let lowerOnly = PasswordGenerator.pool(options: PasswordOptions(
+            includesLowercase: true, includesUppercase: false, includesDigits: false, includesSymbols: false
+        ))
+        #expect(Set(lowerOnly) == Set("abcdefghijklmnopqrstuvwxyz"))
+    }
+
+    @Test("排除易混淆字符把 0 O 1 l I 从池中剔掉")
+    func excludesAmbiguousCharacters() {
+        let plain = PasswordGenerator.pool(options: PasswordOptions(excludesAmbiguous: false))
+        let filtered = PasswordGenerator.pool(options: PasswordOptions(excludesAmbiguous: true))
+        for ambiguous in PasswordGenerator.ambiguousCharacters {
+            #expect(plain.contains(ambiguous), "不排除时池里有「\(ambiguous)」")
+            #expect(!filtered.contains(ambiguous), "排除后池里不应有「\(ambiguous)」")
+        }
+    }
+
+    @Test("所有字符集都关掉时池为空")
+    func emptyWhenAllSetsOff() {
+        let options = PasswordOptions(
+            includesLowercase: false, includesUppercase: false, includesDigits: false, includesSymbols: false
+        )
+        #expect(PasswordGenerator.pool(options: options).isEmpty)
+    }
+
+    // MARK: - 生成
+
+    @Test("生成长度被夹进合法范围")
+    func clampsLength() throws {
+        #expect(try PasswordGenerator.generate(options: PasswordOptions(length: 1)).count == PasswordGenerator.minimumLength)
+        #expect(try PasswordGenerator.generate(options: PasswordOptions(length: 99_999)).count == PasswordGenerator.maximumLength)
+        let fifteen = try PasswordGenerator.generate(options: PasswordOptions(length: 15))
+        #expect(fifteen.count == 15)
+    }
+
+    @Test("产物只含启用字符集的字（多轮验证安全随机不越池）")
+    func outputRespectsPool() throws {
+        let options = PasswordOptions(includesSymbols: true)
+        let pool = Set(PasswordGenerator.pool(options: options))
+        for _ in 0..<50 {
+            let password = try PasswordGenerator.generate(options: options)
+            #expect(Set(password).isSubset(of: pool))
+        }
+    }
+
+    @Test("排除易混淆时产物不含这些字符")
+    func outputOmitsAmbiguous() throws {
+        let options = PasswordOptions(excludesAmbiguous: true)
+        for _ in 0..<200 {
+            let password = try PasswordGenerator.generate(options: options)
+            #expect(password.firstIndex(where: { PasswordGenerator.ambiguousCharacters.contains($0) }) == nil)
+        }
+    }
+
+    @Test("字符集全空时拒绝，不生成空密码")
+    func rejectsEmptyPool() {
+        let options = PasswordOptions(
+            includesLowercase: false, includesUppercase: false, includesDigits: false, includesSymbols: false
+        )
+        let error = catching { try PasswordGenerator.generate(options: options) } as? PasswordError
+        #expect(error == .emptyCharacterSets)
+    }
+
+    @Test("多轮生成不总是同一个（安全随机而非固定值）")
+    func isNotConstant() throws {
+        var seen = Set<String>()
+        for _ in 0..<10 {
+            seen.insert(try PasswordGenerator.generate(options: PasswordOptions(length: 24)))
+        }
+        #expect(seen.count > 1)
+    }
+}
+
+@Suite("工具箱：随机密码工作区状态")
+struct PasswordGeneratorWorkspaceTests {
+    @Test("参数改动不影响已生成密码")
+    func paramChangeKeepsExistingPassword() {
+        var subject = PasswordGeneratorWorkspace()
+        subject.generate()
+        let generated = subject.password
+        #expect(!generated.isEmpty)
+
+        subject.options.length = 24
+        // 参数只改状态，不自动重生成。
+        #expect(subject.password == generated)
+    }
+
+    @Test("字符集全空时生成失败：清掉旧密码并留下说法")
+    func failureClearsPassword() {
+        var subject = PasswordGeneratorWorkspace()
+        subject.generate()
+        #expect(!subject.password.isEmpty)
+
+        subject.options.includesLowercase = false
+        subject.options.includesUppercase = false
+        subject.options.includesDigits = false
+        #expect(!subject.canGenerate)
+
+        subject.generate()
+        #expect(subject.password.isEmpty)
+        #expect(subject.errorMessage != nil)
+
+        // 恢复字符集后重新生成，错误提示被清掉。
+        subject.options.includesDigits = true
+        #expect(subject.canGenerate)
+        subject.generate()
+        #expect(!subject.password.isEmpty)
+        #expect(subject.errorMessage == nil)
     }
 }
 

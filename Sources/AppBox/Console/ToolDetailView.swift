@@ -37,6 +37,8 @@ struct ToolDetailView: View {
                     JSONToolView(model: model)
                 case .qrCode:
                     QRCodeToolView(model: model)
+                case .passwordGenerator:
+                    PasswordToolView(model: model)
                 default:
                     UnimplementedToolView(tool: tool)
                 }

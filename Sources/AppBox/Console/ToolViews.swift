@@ -486,6 +486,150 @@ struct QRCodeToolView: View {
     }
 }
 
+/// 随机密码的工作区。
+///
+/// 左栏是参数（长度、字符集、排除易混淆），右栏是生成的密码。
+/// 参数改动**不**自动重生成（否则拖动长度时每挪一格密码都在跳），要用户显式点「生成密码」。
+/// 密码只存在于内存，不写盘、不入配置；与其余工具同一套「纯计算、无副作用」边界（ADR-0007）。
+struct PasswordToolView: View {
+    var model: ToolboxModel
+
+    var body: some View {
+        ToolWorkspaceFrame {
+            ToolPane(title: "参数", systemImage: "slider.horizontal.3", accessory: { EmptyView() }) {
+                VStack(alignment: .leading, spacing: 10) {
+                    Stepper(value: lengthBinding, in: PasswordGenerator.minimumLength...PasswordGenerator.maximumLength) {
+                        Text("长度 \(model.password.options.length)")
+                            .font(.callout.monospacedDigit())
+                    }
+
+                    VStack(alignment: .leading, spacing: 6) {
+                        Toggle("小写字母 a-z", isOn: lowercaseBinding).toggleStyle(.checkbox)
+                        Toggle("大写字母 A-Z", isOn: uppercaseBinding).toggleStyle(.checkbox)
+                        Toggle("数字 0-9", isOn: digitsBinding).toggleStyle(.checkbox)
+                        Toggle("符号", isOn: symbolsBinding).toggleStyle(.checkbox)
+                    }
+
+                    Divider()
+
+                    Toggle("排除易混淆字符（0 O 1 l I）", isOn: excludeAmbiguousBinding)
+                        .toggleStyle(.checkbox)
+
+                    Spacer(minLength: 0)
+
+                    HStack(spacing: 8) {
+                        Button(model.password.password.isEmpty ? "生成密码" : "重新生成") {
+                            model.generatePassword()
+                        }
+                        .keyboardShortcut(.defaultAction)
+                        .glassActionButton(prominent: true)
+                        .disabled(!model.password.canGenerate)
+
+                        if !model.password.canGenerate {
+                            Text("请至少选择一种字符集")
+                                .font(.caption)
+                                .foregroundStyle(.orange)
+                        }
+                    }
+                }
+                .padding(4)
+            }
+        } output: {
+            ToolPane(title: "密码", systemImage: "key.fill", accessory: {
+                Button("复制") { copyPassword() }
+                    .controlSize(.small)
+                    .disabled(model.password.password.isEmpty)
+            }) {
+                output
+            }
+        }
+        .navigationTitle("随机密码")
+        // 首次进入给一个默认密码，免得右栏一片空白；切走再切回不覆盖已有密码。
+        .onAppear { model.ensureInitialPassword() }
+    }
+
+    private var lengthBinding: Binding<Int> {
+        Binding(
+            get: { model.password.options.length },
+            set: { model.setPasswordLength($0) }
+        )
+    }
+
+    private var lowercaseBinding: Binding<Bool> {
+        Binding(
+            get: { model.password.options.includesLowercase },
+            set: { model.setPasswordIncludesLowercase($0) }
+        )
+    }
+
+    private var uppercaseBinding: Binding<Bool> {
+        Binding(
+            get: { model.password.options.includesUppercase },
+            set: { model.setPasswordIncludesUppercase($0) }
+        )
+    }
+
+    private var digitsBinding: Binding<Bool> {
+        Binding(
+            get: { model.password.options.includesDigits },
+            set: { model.setPasswordIncludesDigits($0) }
+        )
+    }
+
+    private var symbolsBinding: Binding<Bool> {
+        Binding(
+            get: { model.password.options.includesSymbols },
+            set: { model.setPasswordIncludesSymbols($0) }
+        )
+    }
+
+    private var excludeAmbiguousBinding: Binding<Bool> {
+        Binding(
+            get: { model.password.options.excludesAmbiguous },
+            set: { model.setPasswordExcludesAmbiguous($0) }
+        )
+    }
+
+    @ViewBuilder
+    private var output: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            if let message = model.password.errorMessage {
+                Label(message, systemImage: "exclamationmark.triangle")
+                    .font(.callout)
+                    .foregroundStyle(.orange)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            if !model.password.password.isEmpty {
+                Text(model.password.password)
+                    .font(.system(.title3, design: .monospaced))
+                    .textSelection(.enabled)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(10)
+                    .background(.background.opacity(0.5), in: .rect(cornerRadius: 8))
+                    .overlay {
+                        RoundedRectangle(cornerRadius: 8, style: .continuous)
+                            .strokeBorder(.separator, lineWidth: 0.5)
+                    }
+            } else if model.password.errorMessage == nil {
+                Text("点「生成密码」，随机密码会出现在这里")
+                    .font(.callout)
+                    .foregroundStyle(.tertiary)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
+            }
+        }
+    }
+
+    /// 复制到剪贴板。这是用户显式点击才发生的动作，不算工具自身的副作用；
+    /// 密码本身从不落盘、不写配置。
+    private func copyPassword() {
+        guard !model.password.password.isEmpty else { return }
+        let pasteboard = NSPasteboard.general
+        pasteboard.clearContents()
+        pasteboard.setString(model.password.password, forType: .string)
+    }
+}
+
 /// 还没实现的工具：明确说清楚，而不是给一个点了没反应的空白页。
 struct UnimplementedToolView: View {
     let tool: ToolIdentifier

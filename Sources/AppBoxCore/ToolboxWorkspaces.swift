@@ -126,3 +126,36 @@ public struct QRCodeWorkspace: Equatable, Sendable {
         errorMessage = nil
     }
 }
+
+/// 随机密码工具的界面状态。
+///
+/// 与 JSON / 二维码的「输入驱动重算」不同：密码没有输入框，只有参数与一次生成动作。
+/// 参数改动**不**自动重生成（否则拖动长度时每挪一格密码都在跳），要用户显式点「生成密码」。
+/// 生成的密码只活在这里（内存），从不落盘；切工具、关窗口都原样留着，退出进程才忘。
+public struct PasswordGeneratorWorkspace: Equatable, Sendable {
+    public var options: PasswordOptions = PasswordOptions()
+
+    public private(set) var password: String = ""
+    public private(set) var errorMessage: String?
+
+    public init() {}
+
+    /// 当前参数能否组出非空字符池。界面据此禁用「生成 / 复制」，不给无效结果。
+    public var canGenerate: Bool {
+        !PasswordGenerator.pool(options: options).isEmpty
+    }
+
+    /// 生成一个新密码（有放回抽样，允许重复）。
+    ///
+    /// 失败（字符集全空）时清掉旧密码并留下说法——留着上一个密码会让用户以为
+    /// 「这次也生成了」，而实际是拿旧结果骗人。
+    public mutating func generate() {
+        do {
+            password = try PasswordGenerator.generate(options: options)
+            errorMessage = nil
+        } catch {
+            password = ""
+            errorMessage = error.localizedDescription
+        }
+    }
+}

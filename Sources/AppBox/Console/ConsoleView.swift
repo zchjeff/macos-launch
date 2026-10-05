@@ -113,11 +113,16 @@ struct ConsoleView: View {
             // 分区标题的可见性跟着 `expanded` 走：系统默认只在「悬停且展开」时显示标题，
             // 收起后标题会消失，用户就找不到地方点回去了——所以这里显式指定。
             //
-            // 分区头不可选中：`Section` 带上 `selection:` 之后自己也成了一行，
-            // 点标题会把左栏的选中项清空，右侧跟着闪一下空白。
+            // 分区标题整块可点：点标题即切换展开/收起，不再只能去够那个小箭头。
             //
-            // ⚠️ `.selectionDisabled()` 必须只作用在「分区头视图」上，不能挂在 `Section` 上：
-            // 挂在 Section 上会连分区里的每一行一起禁用选中，导致整栏点不动（历史 bug）。
+            // 交互层收在 `SidebarSectionHeader` 里，两处标题共用同一套实现：
+            // 它把命中区域铺满整行（`contentShape`）后接一个 `onTapGesture`，
+            // 让标题区域自己响应切换。
+            //
+            // 但 `onTapGesture` 只吃掉「手势覆盖到的那一下」，标题行本身仍是
+            // `List(selection:)` 的一行——所以 `.selectionDisabled()` 依旧要留着：
+            // 少了它，点到手势没覆盖的边缘会落进列表选择、清空当前选中项（历史 bug）。
+            // 二者叠加：整行都是切换热区，且没有一处会误清空选中。
             Section(isExpanded: $groupsExpanded) {
                 ForEach(model.groups) { snapshot in
                     GroupRow(snapshot: snapshot)
@@ -146,7 +151,7 @@ struct ConsoleView: View {
                     Task { await model.moveGroups(fromOffsets: source, toOffset: destination) }
                 }
             } header: {
-                SidebarSectionHeader(title: "分组")
+                SidebarSectionHeader(title: "分组", isExpanded: $groupsExpanded)
                     .selectionDisabled()
             }
 
@@ -170,7 +175,7 @@ struct ConsoleView: View {
                         .contentShape(Rectangle())
                 }
             } header: {
-                SidebarSectionHeader(title: "工具")
+                SidebarSectionHeader(title: "工具", isExpanded: $toolsExpanded)
                     .selectionDisabled()
             }
         }
@@ -471,15 +476,43 @@ private struct GroupRow: View {
     }
 }
 
-/// 侧栏分区标题。
+/// 侧栏分区标题：整块标题区域可点，切换所属分区的展开/收起。
 ///
-/// 折叠状态下用户点标题会展开或收起，因此标题区域本身不能是按钮
-/// （按钮会吃掉点击、把「点标题折叠」这件事抢走）。
+/// 折叠状态下用户点标题要能展开或收起，因此标题区域本身不能是按钮
+/// （按钮会吃掉点击、把「点标题折叠」这件事抢走，还会盖掉系统的展开箭头）。
+///
+/// 为什么用 `contentShape` + `onTapGesture` 而不是 `Button`：
+/// `Button` 在侧栏 `Section` 头部渲染成一颗芯片，与普通分区头的观感对不上；
+/// 手势则保留标题的原生外观，只在「点击」这一交互层做增强。
+///
+/// 命中区域用 `contentShape(Rectangle())` 铺满整行——不然只有文字那一小截能点，
+/// 点空白处会落进列表选择、清空选中项。`.selectionDisabled()` 由调用方另行施加，
+/// 兜住手势没覆盖到的边角，双保险确保「点标题只切换、绝不清空选中」。
+///
+/// 无障碍：保留系统展开箭头（键盘 / VoiceOver 仍可操作展开态），这里只是**新增**
+/// 鼠标点击热区，不移除任何既有可达路径；再补一条 `.isButton` 轨迹与展开状态值，
+/// 让读屏在标题上也能报出「可点按、已展开/已收起」。
 private struct SidebarSectionHeader: View {
     let title: String
+    @Binding var isExpanded: Bool
 
     var body: some View {
         Text(title)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .contentShape(Rectangle())
+            .onTapGesture {
+                withAnimation(.easeInOut(duration: 0.15)) {
+                    isExpanded.toggle()
+                }
+            }
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel(title)
+            .accessibilityValue(isExpanded ? "已展开" : "已收起")
+            .accessibilityAddTraits(.isButton)
+            .accessibilityRemoveTraits(.isHeader)
+            .accessibilityAction {
+                isExpanded.toggle()
+            }
     }
 }
 

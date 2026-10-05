@@ -25,6 +25,7 @@ public final class ToolboxModel {
     /// 每次新建一个 workspace 就等于把用户粘的东西扔掉。
     public private(set) var json = JSONToolWorkspace()
     public private(set) var qrCode = QRCodeWorkspace()
+    public private(set) var password = PasswordGeneratorWorkspace()
 
     /// 正在跑的那次计算。切输入很快时，只认最后一次的结果——
     /// 否则先发起的慢计算回来晚了，会用旧结果盖掉新结果。
@@ -89,6 +90,53 @@ public final class ToolboxModel {
         var options = qrCode.options
         options.style = style
         setQRCodeOptions(options)
+    }
+
+    // MARK: - 随机密码
+    //
+    // 与 JSON / 二维码不同：密码不接入 `recompute` 的「输入指纹 + 防抖 + 过期丢弃」编排。
+    // 那套机器是为「用户连着敲字、昂贵计算在飞」准备的；密码没有输入框，生成又是
+    // 同步且瞬间完成的，套上去只会平添一次延迟和一个恒真的指纹闸门。
+    // 所以这里参数只改状态、不重生成，生成由「生成密码」按钮或首次进入显式触发。
+
+    /// 改长度：只存参数，不动已生成的密码（否则拖动长度时每挪一格都在跳新密码）。
+    public func setPasswordLength(_ length: Int) {
+        password.options.length = min(max(length, PasswordGenerator.minimumLength), PasswordGenerator.maximumLength)
+    }
+
+    public func setPasswordIncludesLowercase(_ enabled: Bool) {
+        password.options.includesLowercase = enabled
+    }
+
+    public func setPasswordIncludesUppercase(_ enabled: Bool) {
+        password.options.includesUppercase = enabled
+    }
+
+    public func setPasswordIncludesDigits(_ enabled: Bool) {
+        password.options.includesDigits = enabled
+    }
+
+    public func setPasswordIncludesSymbols(_ enabled: Bool) {
+        password.options.includesSymbols = enabled
+    }
+
+    public func setPasswordExcludesAmbiguous(_ enabled: Bool) {
+        password.options.excludesAmbiguous = enabled
+    }
+
+    /// 生成一个新密码（「生成密码 / 重新生成」按钮）。
+    public func generatePassword() {
+        password.generate()
+    }
+
+    /// 首次进入时给一个默认密码，免得右栏一片空白。
+    ///
+    /// 只在「还没有密码」时生成：切走再切回时密码仍在（非空），不会被新随机覆盖——
+    /// 与「切工具不丢内容」这条边界一致。字符集全空导致上一次生成失败时，这里会再试一次，
+    /// 结果依旧是空 + 提示，没有副作用。
+    public func ensureInitialPassword() {
+        guard password.password.isEmpty else { return }
+        password.generate()
     }
 
     /// 重算某个工具。
