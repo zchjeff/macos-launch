@@ -120,6 +120,75 @@ struct ToolPane<Accessory: View, Content: View>: View {
     }
 }
 
+/// 可手动输入的数字字段：文本框 + 上下箭头共享同一个值。
+///
+/// 不直接用 `TextField(value:format:)` 配一个会夹范围的 setter：那样一敲第一个字符
+/// （比如想输 32、先敲的「3」低于下限 4）就会被夹回下限并回显到文本框，接着再敲「2」
+/// 变成 42——数字被夹歪了。这里用一个 `draft` 草稿隔离「正在敲的字」与「已提交的值」：
+/// 敲到合法且在范围内的数字即时生效（右侧预览/结果跟着走），越界或非法的先留着草稿，
+/// 等回车/失焦再夹进范围；箭头改动则直接清草稿、写回夹好的值。
+struct EditableNumberField: View {
+    let title: String
+    @Binding var value: Int
+    let range: ClosedRange<Int>
+    var suffix: String = ""
+
+    /// 正在编辑但尚未确认的原始文本；nil 表示没有草稿，显示回落到当前值。
+    @State private var draft: String?
+
+    var body: some View {
+        HStack(spacing: 6) {
+            Text(title)
+            TextField("", text: draftBinding)
+                .textFieldStyle(.roundedBorder)
+                .frame(width: 56)
+                .multilineTextAlignment(.center)
+                .onSubmit(commit)
+            if !suffix.isEmpty {
+                Text(suffix)
+                    .foregroundStyle(.secondary)
+            }
+            Stepper("", value: stepperBinding, in: range)
+                .labelsHidden()
+        }
+        .font(.callout)
+        .accessibilityElement(children: .contain)
+    }
+
+    private var draftBinding: Binding<String> {
+        Binding(
+            get: { draft ?? String(value) },
+            set: { newText in
+                draft = newText
+                // 合法且在范围内的数字即时提交，让依赖它的输出同步刷新。
+                if let parsed = Int(newText), range.contains(parsed) {
+                    value = parsed
+                }
+            }
+        )
+    }
+
+    private var stepperBinding: Binding<Int> {
+        Binding(
+            get: { value },
+            set: { newValue in
+                draft = nil
+                value = clamped(newValue)
+            }
+        )
+    }
+
+    private func commit() {
+        defer { draft = nil }
+        guard let text = draft, let parsed = Int(text) else { return }
+        value = clamped(parsed)
+    }
+
+    private func clamped(_ input: Int) -> Int {
+        min(max(input, range.lowerBound), range.upperBound)
+    }
+}
+
 /// JSON 格式化 / 压缩的工作区。
 struct JSONToolView: View {
     var model: ToolboxModel
@@ -277,11 +346,8 @@ struct QRCodeToolView: View {
             .labelsHidden()
             .fixedSize()
 
-            Stepper(value: scaleBinding, in: 1...64) {
-                Text("尺寸 \(model.qrCode.options.scale)×")
-                    .font(.caption)
-            }
-            .controlSize(.small)
+            EditableNumberField(title: "尺寸", value: scaleBinding, range: 1...64, suffix: "×")
+                .controlSize(.small)
         }
     }
 
@@ -498,10 +564,11 @@ struct PasswordToolView: View {
         ToolWorkspaceFrame {
             ToolPane(title: "参数", systemImage: "slider.horizontal.3", accessory: { EmptyView() }) {
                 VStack(alignment: .leading, spacing: 10) {
-                    Stepper(value: lengthBinding, in: PasswordGenerator.minimumLength...PasswordGenerator.maximumLength) {
-                        Text("长度 \(model.password.options.length)")
-                            .font(.callout.monospacedDigit())
-                    }
+                    EditableNumberField(
+                        title: "长度",
+                        value: lengthBinding,
+                        range: PasswordGenerator.minimumLength...PasswordGenerator.maximumLength
+                    )
 
                     VStack(alignment: .leading, spacing: 6) {
                         Toggle("小写字母 a-z", isOn: lowercaseBinding).toggleStyle(.checkbox)
