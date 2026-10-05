@@ -11,6 +11,7 @@ import Foundation
 public enum ToolIdentifier: String, CaseIterable, Hashable, Sendable, Identifiable {
     case jsonFormatter
     case qrCode
+    case wifiQRCode
     case base64
     case urlCodec
     case hashDigest
@@ -31,7 +32,7 @@ public enum ToolIdentifier: String, CaseIterable, Hashable, Sendable, Identifiab
     /// 每实现一个工具，就把它的分支从 `false` 挪走。
     public var isImplemented: Bool {
         switch self {
-        case .jsonFormatter, .qrCode, .passwordGenerator: true
+        case .jsonFormatter, .qrCode, .wifiQRCode, .passwordGenerator: true
         case .base64, .urlCodec, .hashDigest, .timestamp, .textDiff,
              .regexTester, .jsonEscape, .uuidGenerator, .placeholderText:
             false

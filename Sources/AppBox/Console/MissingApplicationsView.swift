@@ -21,8 +21,10 @@ struct MissingApplicationsView: View {
             isPresented: forgetConfirmation,
             presenting: model.pendingForget
         ) { record in
+            // 传的是确认框自己拿到的那一份，不是 `model.pendingForget`：
+            // 框一关，待确认项就会被 setter 清掉，异步跑起来的动作再去读就只剩 nil。
             Button("清理「\(record.alias ?? record.bundleIdentifier)」", role: .destructive) {
-                Task { await model.confirmForget() }
+                Task { await model.confirmForget(record) }
             }
             Button("取消", role: .cancel) { model.cancelForget() }
         } message: { _ in

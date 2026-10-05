@@ -227,9 +227,15 @@ public final class ConsoleModel {
         pendingDeletion = nil
     }
 
-    public func confirmDelete() async {
-        guard let pendingDeletion else { return }
-        let groupID = pendingDeletion.group.id
+    /// 确认删除分组。
+    ///
+    /// 目标可以由调用方直接给出。确认框关掉时，系统先经绑定的 setter 把 `pendingDeletion`
+    /// 清空，而按钮的动作是异步派发的（`Task`），等它真正跑起来再回模型里读就已经是 nil 了——
+    /// 那样一次确认会静默什么都不做。界面传进确认框自己拿到的那一份，就不依赖这个时序。
+    /// 不传（单测、直调）才回落到待确认项。
+    public func confirmDelete(_ target: GroupSnapshot? = nil) async {
+        guard let target = target ?? pendingDeletion else { return }
+        let groupID = target.group.id
         await perform { try $0.deleteGroup(id: groupID) }
         self.pendingDeletion = nil
     }
@@ -307,9 +313,11 @@ public final class ConsoleModel {
         pendingForget = nil
     }
 
-    public func confirmForget() async {
-        guard let pendingForget else { return }
-        let bundleIdentifier = pendingForget.bundleIdentifier
+    /// 确认清理一条失效记录。理由同 `confirmDelete`：待确认项会被确认框的关闭动作清掉，
+    /// 异步的动作不能依赖它，界面把自己那一份传进来。
+    public func confirmForget(_ target: MissingApplication? = nil) async {
+        guard let target = target ?? pendingForget else { return }
+        let bundleIdentifier = target.bundleIdentifier
         await perform { try $0.forget(bundleIdentifier: bundleIdentifier) }
         self.pendingForget = nil
     }

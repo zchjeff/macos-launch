@@ -453,6 +453,126 @@ struct QRCodeStyleTests {
     }
 }
 
+@Suite("工具箱：WiFi 二维码载荷")
+struct WiFiQRCodePayloadTests {
+    @Test("WPA + 密码 + 隐藏：标准字段依次拼接，末尾双分号")
+    func wpaFull() throws {
+        let text = try WiFiQRCode.payload(ssid: "Cafe", password: "secret", encryption: .wpa, isHidden: true)
+        #expect(text == "WIFI:T:WPA;S:Cafe;P:secret;H:true;;")
+    }
+
+    @Test("无密码：不写 P 字段，T 为 nopass")
+    func openNetworkOmitsPassword() throws {
+        let text = try WiFiQRCode.payload(ssid: "FreeWiFi", password: "", encryption: .none, isHidden: false)
+        #expect(text == "WIFI:T:nopass;S:FreeWiFi;;")
+    }
+
+    @Test("WEP 保留密码字段")
+    func wepKeepsPassword() throws {
+        let text = try WiFiQRCode.payload(ssid: "old", password: "pw123", encryption: .wep, isHidden: false)
+        #expect(text == "WIFI:T:WEP;S:old;P:pw123;;")
+    }
+
+    @Test("SSID 为空报错，不静默生成半截载荷")
+    func emptySSIDThrows() {
+        let error = catching {
+            try WiFiQRCode.payload(ssid: "   ", password: "x", encryption: .wpa, isHidden: false)
+        }
+        #expect(error as? WiFiQRCode.Error == .emptySSID)
+    }
+
+    @Test("需要密码的加密方式为空密码报错")
+    func emptyPasswordThrowsWhenRequired() {
+        let error = catching {
+            try WiFiQRCode.payload(ssid: "net", password: "", encryption: .wpa, isHidden: false)
+        }
+        #expect(error as? WiFiQRCode.Error == .emptyPassword)
+    }
+
+    @Test("SSID / 密码里的分隔符被反斜杠转义")
+    func escapesSpecialCharacters() throws {
+        let text = try WiFiQRCode.payload(ssid: "a;b", password: "p:w,q\"z\\", encryption: .wpa, isHidden: false)
+        #expect(text == "WIFI:T:WPA;S:a\\;b;P:p\\:w\\,q\\\"z\\\\;;")
+    }
+}
+
+@Suite("工具箱：WiFi 二维码工作区状态")
+struct WiFiQRCodeWorkspaceTests {
+    private final class FakeRenderer: QRCodeRendering, @unchecked Sendable {
+        private(set) var callCount = 0
+        private(set) var lastPayload: Data?
+        var returnsNil = false
+
+        func render(payload: Data, options: QRCodeOptions) -> QRCodeBitmap? {
+            callCount += 1
+            lastPayload = payload
+            return returnsNil ? nil : QRCodeBitmap(pngData: Data("png".utf8), pixelWidth: 8, pixelHeight: 8)
+        }
+    }
+
+    @Test("SSID 为空不起渲染任务")
+    func doesNotRenderEmptySSID() {
+        let renderer = FakeRenderer()
+        var subject = WiFiQRCodeWorkspace()
+        subject.password = "x"
+        subject.compute(renderer: renderer)
+        #expect(renderer.callCount == 0)
+        #expect(subject.bitmap == nil)
+        #expect(subject.errorMessage == nil)
+    }
+
+    @Test("填齐后渲染，载荷是拼好的 WIFI 文本")
+    func rendersWhenFilled() {
+        let renderer = FakeRenderer()
+        var subject = WiFiQRCodeWorkspace()
+        subject.ssid = "Cafe"
+        subject.password = "secret"
+        subject.compute(renderer: renderer)
+        #expect(renderer.callCount == 1)
+        #expect(subject.bitmap != nil)
+        #expect(subject.errorMessage == nil)
+        #expect(String(data: renderer.lastPayload ?? Data(), encoding: .utf8) == "WIFI:T:WPA;S:Cafe;P:secret;;")
+    }
+
+    @Test("密码缺失时报错并清掉旧图")
+    func reportsMissingPassword() {
+        let renderer = FakeRenderer()
+        var subject = WiFiQRCodeWorkspace()
+        subject.ssid = "Cafe"
+        subject.password = "secret"
+        subject.compute(renderer: renderer)
+        #expect(subject.bitmap != nil)
+
+        subject.password = ""
+        subject.compute(renderer: renderer)
+        #expect(subject.bitmap == nil)
+        #expect(subject.errorMessage?.contains("密码") == true)
+    }
+
+    @Test("渲染器返回 nil 时给出说法")
+    func reportsRenderFailure() {
+        let renderer = FakeRenderer()
+        renderer.returnsNil = true
+        var subject = WiFiQRCodeWorkspace()
+        subject.ssid = "net"
+        subject.password = "pw"
+        subject.compute(renderer: renderer)
+        #expect(subject.bitmap == nil)
+        #expect(subject.errorMessage != nil)
+    }
+
+    @Test("美化样式随 options 透传给渲染器")
+    func passesStyleThrough() {
+        let renderer = FakeRenderer()
+        var subject = WiFiQRCodeWorkspace()
+        subject.ssid = "net"
+        subject.password = "pw"
+        subject.options = QRCodeOptions(correctionLevel: .high, style: QRCodeStyle(foreground: QRColor(rgb: 0xFF0000)))
+        subject.compute(renderer: renderer)
+        #expect(renderer.lastPayload != nil)
+    }
+}
+
 @Suite("工具箱：过期结果识别")
 struct ToolboxFingerprintTests {
     private func json(_ input: String, indent: JSONTool.Indent = .spaces(2), compact: Bool = false) -> String {
@@ -461,6 +581,10 @@ struct ToolboxFingerprintTests {
 
     private func qr(_ input: String, options: QRCodeOptions = QRCodeOptions()) -> String {
         ToolboxFingerprint.make(.qrCode, input: input, indent: .spaces(2), isCompact: false, options: options)
+    }
+
+    private func wifi(_ fields: String, options: QRCodeOptions = QRCodeOptions()) -> String {
+        ToolboxFingerprint.make(.wifiQRCode, input: fields, indent: .spaces(2), isCompact: false, options: options)
     }
 
     @Test("输入、缩进、压缩开关变了，指纹都跟着变")
@@ -493,6 +617,17 @@ struct ToolboxFingerprintTests {
                 != qr("a", options: QRCodeOptions(style: .default)))
     }
 
+    @Test("WiFi 任一字段或样式变化都翻转指纹")
+    func changesWithWiFiFields() {
+        #expect(wifi("net\u{1F}pw\u{1F}wpa\u{1F}false") != wifi("net2\u{1F}pw\u{1F}wpa\u{1F}false"))
+        #expect(wifi("net\u{1F}pw\u{1F}wpa\u{1F}false") != wifi("net\u{1F}pw\u{1F}wep\u{1F}false"))
+        #expect(wifi("net\u{1F}pw\u{1F}wpa\u{1F}false") != wifi("net\u{1F}pw\u{1F}wpa\u{1F}true"))
+        #expect(wifi("net", options: QRCodeOptions(style: .default))
+                != wifi("net", options: QRCodeOptions(style: QRCodeStyle(foreground: QRColor(rgb: 0xFF0000)))))
+        // 与通用二维码不串味：同样的原始输入也不应撞上。
+        #expect(wifi("a") != qr("a"))
+    }
+
     @Test("工具之间不串味：改二维码参数不该让 JSON 重算")
     func isolatesTools() {
         #expect(json("a") != qr("a"))
@@ -505,16 +640,16 @@ struct ToolboxFingerprintTests {
 
 @Suite("工具箱：工具清单")
 struct ToolIdentifierTests {
-    @Test("共 12 个工具，id 互不重复")
-    func exposesTwelveDistinctTools() {
-        #expect(ToolIdentifier.allCases.count == 12)
-        #expect(Set(ToolIdentifier.allCases.map(\.id)).count == 12)
+    @Test("共 13 个工具，id 互不重复")
+    func exposesThirteenDistinctTools() {
+        #expect(ToolIdentifier.allCases.count == 13)
+        #expect(Set(ToolIdentifier.allCases.map(\.id)).count == 13)
     }
 
     @Test("已实现的工具与未实现的分得清")
     func marksImplementedTools() {
         // 侧栏据此把未实现的置灰。没实现的不该假装能用。
-        #expect(ToolIdentifier.allCases.filter(\.isImplemented) == [.jsonFormatter, .qrCode, .passwordGenerator])
+        #expect(ToolIdentifier.allCases.filter(\.isImplemented) == [.jsonFormatter, .qrCode, .wifiQRCode, .passwordGenerator])
     }
 }
 

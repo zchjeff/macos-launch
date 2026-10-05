@@ -552,6 +552,184 @@ struct QRCodeToolView: View {
     }
 }
 
+/// WiFi 二维码的工作区。
+///
+/// 左栏是表单（加密方式 / SSID / 隐藏开关 / 密码 / 颜色），右栏是预览。
+/// 与通用二维码不同：这里不让用户手写 `WIFI:` 文本，而是拆成字段交给 `WiFiQRCode` 拼载荷，
+/// 转义与校验都在 Core 侧。密码默认遮蔽，用旁边的小眼睛切换可见——这只是视图态，不入模型。
+struct WiFiQRCodeToolView: View {
+    var model: ToolboxModel
+
+    /// 是否明文显示密码。纯界面开关，不影响载荷，也不进 `ToolboxModel`。
+    @State private var showPassword = false
+
+    var body: some View {
+        ToolWorkspaceFrame {
+            ToolPane(title: "网络", systemImage: "wifi", accessory: { EmptyView() }) {
+                VStack(alignment: .leading, spacing: 12) {
+                    Picker("加密方式", selection: encryptionBinding) {
+                        ForEach(WiFiEncryption.allCases, id: \.self) { encryption in
+                            Text(encryption.displayName).tag(encryption)
+                        }
+                    }
+                    .frame(maxWidth: 260, alignment: .leading)
+
+                    HStack(spacing: 10) {
+                        TextField("WiFi 名称（SSID）", text: ssidBinding)
+                            .textFieldStyle(.roundedBorder)
+                        Toggle("隐藏网络", isOn: hiddenBinding)
+                            .toggleStyle(.checkbox)
+                            .fixedSize()
+                    }
+
+                    HStack(spacing: 6) {
+                        Group {
+                            if showPassword {
+                                TextField("WiFi 密码", text: passwordBinding)
+                            } else {
+                                SecureField("WiFi 密码", text: passwordBinding)
+                            }
+                        }
+                        .textFieldStyle(.roundedBorder)
+                        .disabled(model.wifi.encryption == .none)
+
+                        Button {
+                            showPassword.toggle()
+                        } label: {
+                            Image(systemName: showPassword ? "eye.slash" : "eye")
+                        }
+                        .buttonStyle(.borderless)
+                        .disabled(model.wifi.encryption == .none)
+                    }
+
+                    Divider()
+
+                    HStack(spacing: 10) {
+                        ColorPicker("码点", selection: foregroundBinding, supportsOpacity: false)
+                            .labelsHidden()
+                        Text("码点")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        ColorPicker("背景", selection: backgroundBinding, supportsOpacity: false)
+                            .labelsHidden()
+                        Text("背景")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        Spacer()
+                        if model.wifi.options.style != .default {
+                            Button("恢复默认颜色", action: resetStyle)
+                                .controlSize(.small)
+                                .buttonStyle(.link)
+                        }
+                    }
+
+                    Spacer(minLength: 0)
+                }
+                .padding(4)
+            }
+        } output: {
+            ToolPane(title: "预览", systemImage: "photo", accessory: {
+                if let bitmap = model.wifi.bitmap {
+                    Button("导出 PNG…") { export(bitmap) }
+                        .controlSize(.small)
+                }
+            }) {
+                preview
+            }
+        }
+        .navigationTitle("WiFi 二维码")
+    }
+
+    private var ssidBinding: Binding<String> {
+        Binding(get: { model.wifi.ssid }, set: { model.setWiFiSSID($0) })
+    }
+
+    private var passwordBinding: Binding<String> {
+        Binding(get: { model.wifi.password }, set: { model.setWiFiPassword($0) })
+    }
+
+    private var encryptionBinding: Binding<WiFiEncryption> {
+        Binding(get: { model.wifi.encryption }, set: { model.setWiFiEncryption($0) })
+    }
+
+    private var hiddenBinding: Binding<Bool> {
+        Binding(get: { model.wifi.isHidden }, set: { model.setWiFiHidden($0) })
+    }
+
+    private var foregroundBinding: Binding<Color> {
+        Binding(
+            get: { Color(nsColor: NSColor(model.wifi.options.style.foreground)) },
+            set: { color in
+                var style = model.wifi.options.style
+                style.foreground = QRColor(color)
+                model.setWiFiStyle(style)
+            }
+        )
+    }
+
+    private var backgroundBinding: Binding<Color> {
+        Binding(
+            get: { Color(nsColor: NSColor(model.wifi.options.style.background)) },
+            set: { color in
+                var style = model.wifi.options.style
+                style.background = QRColor(color)
+                model.setWiFiStyle(style)
+            }
+        )
+    }
+
+    private func resetStyle() {
+        model.setWiFiStyle(.default)
+    }
+
+    @ViewBuilder
+    private var preview: some View {
+        VStack(spacing: 8) {
+            if let message = model.wifi.errorMessage {
+                Label(message, systemImage: "exclamationmark.triangle")
+                    .font(.callout)
+                    .foregroundStyle(.orange)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            if let bitmap = model.wifi.bitmap, let image = NSImage(data: bitmap.pngData) {
+                Image(nsImage: image)
+                    .interpolation(.none)
+                    .resizable()
+                    .aspectRatio(contentMode: .fit)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .padding(8)
+                    .background(.white, in: .rect(cornerRadius: 8))
+                    .overlay {
+                        RoundedRectangle(cornerRadius: 8, style: .continuous)
+                            .strokeBorder(.separator, lineWidth: 0.5)
+                    }
+                    .overlay(alignment: .bottom) {
+                        Text("\(bitmap.pixelWidth) × \(bitmap.pixelHeight) 像素")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                            .padding(.bottom, 2)
+                    }
+            } else if model.wifi.errorMessage == nil {
+                Text("填写 WiFi 名称后，这里会显示二维码")
+                    .font(.callout)
+                    .foregroundStyle(.tertiary)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
+            }
+        }
+    }
+
+    /// 导出 PNG。与通用二维码同一规矩：只有用户点按钮才写磁盘（ADR-0007）。
+    private func export(_ bitmap: QRCodeBitmap) {
+        let panel = NSSavePanel()
+        panel.allowedContentTypes = [.png]
+        panel.nameFieldStringValue = "wifi-qrcode.png"
+        panel.canCreateDirectories = true
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        try? bitmap.pngData.write(to: url, options: .atomic)
+    }
+}
+
 /// 随机密码的工作区。
 ///
 /// 左栏是参数（长度、字符集、排除易混淆），右栏是生成的密码。
@@ -722,6 +900,7 @@ extension ToolIdentifier {
         switch self {
         case .jsonFormatter: "JSON 格式化"
         case .qrCode: "二维码生成"
+        case .wifiQRCode: "WiFi 二维码"
         case .base64: "Base64 编解码"
         case .urlCodec: "URL 编解码"
         case .hashDigest: "哈希摘要"
@@ -739,6 +918,7 @@ extension ToolIdentifier {
         switch self {
         case .jsonFormatter: "curlybraces"
         case .qrCode: "qrcode"
+        case .wifiQRCode: "wifi"
         case .base64: "arrow.left.arrow.right.square"
         case .urlCodec: "link"
         case .hashDigest: "number"

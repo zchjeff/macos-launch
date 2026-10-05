@@ -25,6 +25,10 @@ public enum ToolboxFingerprint {
             // 不用 `\(options)` 的默认反射描述：那会把整段 Logo PNG 字节拼进字符串，
             // 既臃肿又拖慢比较。用 style 的轻量 token 单独承担美化参数的变化。
             "qr|\(options.correctionLevel)|\(options.scale)|\(options.quietZone)|\(options.style.fingerprintToken)|\(input.hashValue)"
+        case .wifiQRCode:
+            // `input` 这里是 WiFi 各字段的原始拼接（见 `WiFiQRCodeWorkspace.fingerprintInput`）：
+            // 载荷本身可能因校验失败而算不出，但任一字段挪动都该让这次计算作废。
+            "wifi|\(input.hashValue)|\(options.correctionLevel)|\(options.scale)|\(options.quietZone)|\(options.style.fingerprintToken)"
         default:
             "\(tool.rawValue)|"
         }
@@ -111,6 +115,72 @@ public struct QRCodeWorkspace: Equatable, Sendable {
         let payload: Data
         do {
             payload = try QRCode.payload(text: input, options: options)
+        } catch {
+            bitmap = nil
+            errorMessage = error.localizedDescription
+            return
+        }
+
+        guard let rendered = renderer.render(payload: payload, options: options) else {
+            bitmap = nil
+            errorMessage = "生成失败了：当前环境渲染不出二维码图像。"
+            return
+        }
+        bitmap = rendered
+        errorMessage = nil
+    }
+}
+
+/// WiFi 二维码工具的界面状态。
+///
+/// 与通用二维码工具的区分：这里不直接让用户敲 `WIFI:` 文本（那串转义规则容易写错），
+/// 而是把 SSID / 密码 / 加密 / 隐藏拆成表单字段，载荷由 `WiFiQRCode` 拼。拼好后
+/// 复用同一套 `QRCode` 容量校验与 `QRCodeRendering` 出图，美化参数（颜色等）也走 `options`。
+public struct WiFiQRCodeWorkspace: Equatable, Sendable {
+    public var ssid: String = ""
+    public var password: String = ""
+    public var encryption: WiFiEncryption = .wpa
+    public var isHidden: Bool = false
+    public var options: QRCodeOptions = QRCodeOptions()
+
+    public private(set) var bitmap: QRCodeBitmap?
+    public private(set) var errorMessage: String?
+
+    public init() {}
+
+    /// SSID 是否为空（只有空白也算空）。
+    ///
+    /// 与通用二维码的「空输入不报错」同理：用户还没填名字时不该被红字骂，
+    /// 直接清掉预览、留占位提示。
+    public var isEmpty: Bool {
+        ssid.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    /// 参与指纹的原始字段拼接（用分隔符连起，任一字段变化都会翻转指纹）。
+    public var fingerprintInput: String {
+        "\(ssid)\u{1F}\(password)\u{1F}\(encryption.rawValue)\u{1F}\(isHidden)"
+    }
+
+    /// 拼载荷 → 容量校验 → 出图。任一环节失败都清掉旧图并留下说法，不留旧结果骗人。
+    public mutating func compute(renderer: some QRCodeRendering) {
+        guard !isEmpty else {
+            bitmap = nil
+            errorMessage = nil
+            return
+        }
+
+        let text: String
+        do {
+            text = try WiFiQRCode.payload(ssid: ssid, password: password, encryption: encryption, isHidden: isHidden)
+        } catch {
+            bitmap = nil
+            errorMessage = error.localizedDescription
+            return
+        }
+
+        let payload: Data
+        do {
+            payload = try QRCode.payload(text: text, options: options)
         } catch {
             bitmap = nil
             errorMessage = error.localizedDescription

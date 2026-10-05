@@ -40,8 +40,10 @@ struct ConsoleView: View {
                     isPresented: deleteConfirmation,
                     presenting: model.pendingDeletion
                 ) { snapshot in
+                    // 同失效记录的清理：目标取自确认框那一份，不依赖 `model.pendingDeletion`——
+                    // 确认框关闭时它已被 setter 清空，而动作是异步派发的。
                     Button("删除「\(snapshot.group.name)」", role: .destructive) {
-                        Task { await model.confirmDelete() }
+                        Task { await model.confirmDelete(snapshot) }
                     }
                     Button("取消", role: .cancel) { model.cancelDelete() }
                 } message: { _ in

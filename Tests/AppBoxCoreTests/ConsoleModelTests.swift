@@ -192,6 +192,23 @@ struct ConsoleDeletionTests {
         #expect(fixture.service.currentConfig.groups.count == 2)
     }
 
+    @Test("确认框先关后动作才跑：删除照样落盘")
+    func confirmTakesTheSnapshotFromTheDialog() async throws {
+        let fixture = try fixtureWithDevGroup()
+        let (model, dev) = try await modelWithDevGroup(fixture)
+
+        model.requestDelete(dev)
+        // 界面上的真实时序：确认框一关，绑定 setter 就把待确认项清掉了，
+        // 而按钮动作是 `Task` 异步派发的。少了确认框递给它的那一份，这一次确认会静默落空。
+        let target = try #require(model.pendingDeletion)
+        model.cancelDelete()
+
+        await model.confirmDelete(target)
+
+        #expect(fixture.service.currentConfig.groups.count == 1)
+        #expect(model.groups.map(\.group.id) == [Group.ungroupedID])
+    }
+
     @Test("确认删除后应用落回「未分类」，且重启后仍然如此")
     func confirmMovesApplicationsAndPersists() async throws {
         let fixture = try fixtureWithDevGroup()
@@ -635,6 +652,24 @@ struct ConsoleMissingTests {
         #expect(model.pendingForget == nil)
         #expect(model.forgetConfirmationMessage == nil)
         #expect(fixture.service.currentConfig.applications["com.example.gone"] != nil)
+    }
+
+    @Test("确认框先关后动作才跑：清理照样落盘")
+    func confirmTakesTheRecordFromTheDialog() async throws {
+        let fixture = try fixture()
+        let model = ConsoleModel(service: fixture.service)
+        await model.refresh()
+        model.selection = .missing
+
+        model.requestForget("com.example.gone")
+        // 同确认框的真实时序：关闭先于异步动作，待确认项那时已经不在模型里了。
+        let target = try #require(model.pendingForget)
+        model.cancelForget()
+
+        await model.confirmForget(target)
+
+        #expect(fixture.service.currentConfig.applications["com.example.gone"] == nil)
+        #expect(model.missing.isEmpty)
     }
 
     @Test("确认清理后记录连同别名、分组一起消失，重启后仍然没有")

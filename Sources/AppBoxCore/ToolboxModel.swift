@@ -25,6 +25,7 @@ public final class ToolboxModel {
     /// 每次新建一个 workspace 就等于把用户粘的东西扔掉。
     public private(set) var json = JSONToolWorkspace()
     public private(set) var qrCode = QRCodeWorkspace()
+    public private(set) var wifi = WiFiQRCodeWorkspace()
     public private(set) var password = PasswordGeneratorWorkspace()
 
     /// 正在跑的那次计算。切输入很快时，只认最后一次的结果——
@@ -92,6 +93,43 @@ public final class ToolboxModel {
         setQRCodeOptions(options)
     }
 
+    // MARK: - WiFi 二维码
+    //
+    // 与通用二维码同一套「输入指纹 + 防抖 + 过期丢弃」编排：用户在一个字段里连着敲时
+    // 防抖，改加密方式/隐藏开关/颜色这类无连续性的参数时立即算。
+
+    public func setWiFiSSID(_ ssid: String) {
+        wifi.ssid = ssid
+        recompute(.wifiQRCode, debounce: true)
+    }
+
+    public func setWiFiPassword(_ password: String) {
+        wifi.password = password
+        recompute(.wifiQRCode, debounce: true)
+    }
+
+    public func setWiFiEncryption(_ encryption: WiFiEncryption) {
+        wifi.encryption = encryption
+        recompute(.wifiQRCode)
+    }
+
+    public func setWiFiHidden(_ hidden: Bool) {
+        wifi.isHidden = hidden
+        recompute(.wifiQRCode)
+    }
+
+    public func setWiFiOptions(_ options: QRCodeOptions) {
+        wifi.options = options
+        recompute(.wifiQRCode)
+    }
+
+    /// 换 WiFi 二维码的美化样式（颜色等），与 `setQRCodeStyle` 同理只是落到 wifi 上。
+    public func setWiFiStyle(_ style: QRCodeStyle) {
+        var options = wifi.options
+        options.style = style
+        setWiFiOptions(options)
+    }
+
     // MARK: - 随机密码
     //
     // 与 JSON / 二维码不同：密码不接入 `recompute` 的「输入指纹 + 防抖 + 过期丢弃」编排。
@@ -149,19 +187,25 @@ public final class ToolboxModel {
         computeTask?.cancel()
 
         // 先算指纹再起任务：慢计算回来时用它判断自己是不是过期了。
-        let fingerprint = ToolboxFingerprint.make(
-            tool,
-            input: tool == .jsonFormatter ? json.input : qrCode.input,
-            indent: json.indent,
-            isCompact: json.isCompact,
-            options: qrCode.options
-        )
+        // 按工具分支取各自的输入与参数：wifi 的「输入」是各字段原始拼接，options 走自己那份。
+        let fingerprint: String
+        switch tool {
+        case .jsonFormatter:
+            fingerprint = ToolboxFingerprint.make(.jsonFormatter, input: json.input, indent: json.indent, isCompact: json.isCompact, options: QRCodeOptions())
+        case .qrCode:
+            fingerprint = ToolboxFingerprint.make(.qrCode, input: qrCode.input, indent: json.indent, isCompact: json.isCompact, options: qrCode.options)
+        case .wifiQRCode:
+            fingerprint = ToolboxFingerprint.make(.wifiQRCode, input: wifi.fingerprintInput, indent: json.indent, isCompact: json.isCompact, options: wifi.options)
+        default:
+            fingerprint = ToolboxFingerprint.make(tool, input: "", indent: json.indent, isCompact: json.isCompact, options: QRCodeOptions())
+        }
         pendingFingerprint = fingerprint
 
         // 用任务自己的副本去算，避免算的过程中用户又改了输入、
         // 读到一半新一半旧的混合状态。
         let jsonSnapshot = json
         let qrSnapshot = qrCode
+        let wifiSnapshot = wifi
         let renderer = qrRenderer
 
         computeTask = Task { [weak self] in
@@ -172,11 +216,14 @@ public final class ToolboxModel {
 
             var nextJSON = jsonSnapshot
             var nextQR = qrSnapshot
+            var nextWiFi = wifiSnapshot
             switch tool {
             case .jsonFormatter:
                 nextJSON.compute()
             case .qrCode:
                 nextQR.compute(renderer: renderer)
+            case .wifiQRCode:
+                nextWiFi.compute(renderer: renderer)
             default:
                 return
             }
@@ -188,6 +235,7 @@ public final class ToolboxModel {
             switch tool {
             case .jsonFormatter: self.json = nextJSON
             case .qrCode: self.qrCode = nextQR
+            case .wifiQRCode: self.wifi = nextWiFi
             default: break
             }
         }
